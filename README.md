@@ -56,7 +56,7 @@ cargo run --release -- -v /path/to/your/file.vcf -s /path/to/your/scoring.txt --
 The input should be a standard VCF file. The tool expects the chromosome, position, and genotype information.
 
 ### Scoring File
-The scoring file should be a tab-separated file with the following columns:
+The scoring file is expected to be in PGS Catalog format; that is, a tab-separated file with the following columns:
 1. Chromosome
 2. Position
 3. Effect allele
