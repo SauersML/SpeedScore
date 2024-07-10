@@ -3,30 +3,26 @@ use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
 use flate2::read::GzDecoder;
 
-struct ResilienceGzDecoder<R: Read + Seek> {
-    inner: GzDecoder<R>,
-    source: R,
+struct ResilienceReader<R: Read + Seek> {
+    inner: R,
     recovery_attempts: usize,
 }
 
-impl<R: Read + Seek> ResilienceGzDecoder<R> {
-    fn new(source: R) -> Self {
-        let inner = GzDecoder::new(source.by_ref());
+impl<R: Read + Seek> ResilienceReader<R> {
+    fn new(inner: R) -> Self {
         Self {
             inner,
-            source,
             recovery_attempts: 0,
         }
     }
 }
 
-impl<R: Read + Seek> Read for ResilienceGzDecoder<R> {
+impl<R: Read + Seek> Read for ResilienceReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.inner.read(buf) {
             Ok(0) if self.recovery_attempts < 3 => {
                 self.recovery_attempts += 1;
-                self.source.seek(SeekFrom::Start(0))?;
-                self.inner = GzDecoder::new(self.source.by_ref());
+                self.inner.seek(SeekFrom::Start(0))?;
                 self.read(buf)
             }
             result => result,
@@ -42,14 +38,14 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     
     let reader: Box<dyn Read> = if path.ends_with(".gz") {
         if debug {
-            println!("Detected gzipped file, using ResilienceGzDecoder");
+            println!("Detected gzipped file, using GzDecoder with ResilienceReader");
         }
-        Box::new(ResilienceGzDecoder::new(file))
+        Box::new(GzDecoder::new(ResilienceReader::new(file)))
     } else {
         if debug {
-            println!("Using standard File reader");
+            println!("Using standard File reader with ResilienceReader");
         }
-        Box::new(file)
+        Box::new(ResilienceReader::new(file))
     };
 
     let mut reader = BufReader::new(reader);
