@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use rayon::prelude::*;
 use flate2::read::GzDecoder;
 
 pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>, debug: bool) -> io::Result<(f64, usize, usize)> {
@@ -14,11 +13,13 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
 
     let mut lines = reader.lines();
     let header = find_header(&mut lines)?;
+    let sample_count = header.split('\t').count() - 9;
+    
     if debug {
         println!("Header found: {}", header);
         println!("Sample count: {}", sample_count);
         println!("Attempting to read first few lines after header:");
-        for (i, line) in lines.take(5).enumerate() {
+        for (i, line) in lines.by_ref().take(5).enumerate() {
             match line {
                 Ok(l) => println!("Line {}: {}", i + 1, l),
                 Err(e) => println!("Error reading line {}: {}", i + 1, e),
@@ -34,7 +35,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
                 println!("Processing line {}", line_count);
             }
             line_count += 1;
-            line.ok().map(|l| process_line(&l, effect_weights, sample_count))
+            line.ok().map(|l| process_line(&l, effect_weights, sample_count, debug))
         })
         .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
 
