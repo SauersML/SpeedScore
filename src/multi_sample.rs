@@ -1,165 +1,119 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, BufRead, BufReader};
+use std::io::{self, Read, BufRead, BufReader};
 use flate2::read::GzDecoder;
 use std::time::Instant;
 
 const BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 
-trait ReadOnly: Read {}
-impl<T: Read> ReadOnly for T {}
+// Custom error type for our operations
+#[derive(Debug)]
+enum VcfError {
+    Io(io::Error),
+    InvalidFormat(String),
+    Utf8Error(std::string::FromUtf8Error),
+}
 
-trait ReadSeek: Read + Seek {}
-impl<T: Read + Seek> ReadSeek for T {}
-
-struct GzDecoderWrapper<R: Read>(GzDecoder<R>);
-
-impl<R: Read> Read for GzDecoderWrapper<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
+impl From<io::Error> for VcfError {
+    fn from(error: io::Error) -> Self {
+        VcfError::Io(error)
     }
 }
 
-impl<R: Read> ReadOnly for GzDecoderWrapper<R> {}
-
-struct ResilienceReader<R: ReadOnly> {
-    inner: R,
-    buffer: Vec<u8>,
-    pos: usize,
-    cap: usize,
+impl From<std::string::FromUtf8Error> for VcfError {
+    fn from(error: std::string::FromUtf8Error) -> Self {
+        VcfError::Utf8Error(error)
+    }
 }
 
-impl<R: ReadOnly> ResilienceReader<R> {
-    fn new(inner: R) -> Self {
-        Self {
-            inner,
-            buffer: vec![0; BUFFER_SIZE],
-            pos: 0,
-            cap: 0,
-        }
+// A trait for reading lines that works with both regular and gzipped files
+trait LineReader {
+    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError>;
+}
+
+// Implement LineReader for BufReader<File>
+impl LineReader for BufReader<File> {
+    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
+        buf.clear();
+        Ok(self.read_line(buf)?)
+    }
+}
+
+// Implement LineReader for BufReader<GzDecoder<File>>
+impl LineReader for BufReader<GzDecoder<File>> {
+    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
+        buf.clear();
+        Ok(self.read_line(buf)?)
+    }
+}
+
+// A struct to hold our VCF reader and its metadata
+struct VcfReader {
+    reader: Box<dyn LineReader>,
+    sample_count: usize,
+}
+
+impl VcfReader {
+    fn new(path: &str) -> Result<Self, VcfError> {
+        let file = File::open(path)?;
+        let reader: Box<dyn LineReader> = if path.ends_with(".gz") {
+            Box::new(BufReader::new(GzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+
+        let mut vcf_reader = VcfReader { reader, sample_count: 0 };
+        vcf_reader.find_header()?;
+        Ok(vcf_reader)
     }
 
-    fn fill_buffer(&mut self) -> io::Result<()> {
-        self.pos = 0;
-        self.cap = 0;
-        while self.cap < self.buffer.len() {
-            match self.inner.read(&mut self.buffer[self.cap..]) {
-                Ok(0) => break,
-                Ok(n) => self.cap += n,
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-
-    fn read_until(&mut self, delimiter: u8, buf: &mut Vec<u8>) -> io::Result<usize> {
-        let mut read = 0;
+    fn find_header(&mut self) -> Result<(), VcfError> {
+        let mut line = String::new();
         loop {
-            if self.pos >= self.cap {
-                self.fill_buffer()?;
-                if self.cap == 0 {
-                    return Ok(read);
-                }
-            }
-            
-            let (done, used) = {
-                let available = &self.buffer[self.pos..self.cap];
-                let mut memchr = available.iter().enumerate();
-                
-                match memchr.find(|&(_, &b)| b == delimiter) {
-                    Some((i, _)) => {
-                        buf.extend_from_slice(&available[..=i]);
-                        (true, i + 1)
-                    }
-                    None => {
-                        buf.extend_from_slice(available);
-                        (false, available.len())
-                    }
-                }
-            };
-            self.pos += used;
-            read += used;
-            if done || used == 0 {
-                return Ok(read);
+            self.reader.read_line(&mut line)?;
+            if line.starts_with("#CHROM") {
+                self.sample_count = line.split_whitespace().count() - 9;
+                return Ok(());
+            } else if !line.starts_with('#') {
+                return Err(VcfError::InvalidFormat("VCF header not found".to_string()));
             }
         }
     }
 }
 
-impl<R: ReadOnly> Read for ResilienceReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.pos >= self.cap {
-            self.fill_buffer()?;
-            if self.cap == 0 {
-                return Ok(0);
-            }
-        }
-        let amt = std::cmp::min(buf.len(), self.cap - self.pos);
-        buf[..amt].copy_from_slice(&self.buffer[self.pos..self.pos + amt]);
-        self.pos += amt;
-        Ok(amt)
-    }
-}
-
-pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>, debug: bool) -> io::Result<(f64, usize, usize)> {
+pub fn calculate_polygenic_score_multi(
+    path: &str,
+    effect_weights: &HashMap<(u8, u32), f32>,
+    debug: bool
+) -> Result<(f64, usize, usize), VcfError> {
     let start_time = Instant::now();
     
     if debug {
         println!("Opening file: {}", path);
     }
-    let file = File::open(path)?;
-    
-    let reader: Box<dyn ReadOnly> = if path.ends_with(".gz") {
-        if debug {
-            println!("Detected gzipped file, using GzDecoder with ResilienceReader");
-        }
-        Box::new(ResilienceReader::new(GzDecoderWrapper(GzDecoder::new(file))))
-    } else {
-        if debug {
-            println!("Using standard ResilienceReader");
-        }
-        Box::new(ResilienceReader::new(file))
-    };
+
+    let mut vcf_reader = VcfReader::new(path)?;
 
     if debug {
-        println!("Searching for VCF data start...");
-    }
-    let (header, sample_count) = find_vcf_start(reader)?;
-
-    if debug {
-        println!("VCF data start found. Header: {}", header);
-        println!("Sample count: {}", sample_count);
+        println!("VCF data start found.");
+        println!("Sample count: {}", vcf_reader.sample_count);
         println!("Processing variants...");
     }
 
-    let mut reader = header.reader;
-    let mut line_buffer = Vec::new();
+    let mut line = String::new();
     let mut total_score = 0.0;
     let mut total_variants = 0;
     let mut total_matched = 0;
 
-    loop {
-        line_buffer.clear();
-        match reader.read_until(b'\n', &mut line_buffer) {
-            Ok(0) => break, // End of file
-            Ok(_) => {
-                if !line_buffer.starts_with(b"#") {
-                    let line = String::from_utf8_lossy(&line_buffer);
-                    let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
-                    total_score += score;
-                    total_variants += variants;
-                    total_matched += matched;
+    while vcf_reader.reader.read_line(&mut line)? > 0 {
+        if !line.starts_with('#') {
+            let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
+            total_score += score;
+            total_variants += variants;
+            total_matched += matched;
 
-                    if debug && total_variants % 100_000 == 0 {
-                        println!("Processed {} variants", total_variants);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Error reading line: {}. Skipping to next line.", e);
-                // Attempt to recover by seeking to the next newline
-                reader.read_until(b'\n', &mut Vec::new())?;
+            if debug && total_variants % 100_000 == 0 {
+                println!("Processed {} variants", total_variants);
             }
         }
     }
@@ -175,39 +129,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
         }
     }
 
-    Ok((total_score / sample_count as f64, total_variants, total_matched))
-}
-
-struct HeaderInfo {
-    header: String,
-    sample_count: usize,
-    reader: Box<dyn ReadOnly>,
-}
-
-fn find_vcf_start(mut reader: Box<dyn ReadOnly>) -> io::Result<HeaderInfo> {
-    let mut line = Vec::new();
-    let mut last_header_line = String::new();
-
-    loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "VCF header not found"));
-        }
-
-        let line_str = String::from_utf8_lossy(&line);
-        if line_str.starts_with("#CHROM") {
-            let sample_count = line_str.split_whitespace().count() - 9;
-            return Ok(HeaderInfo {
-                header: last_header_line,
-                sample_count,
-                reader,
-            });
-        } else if line_str.starts_with('#') {
-            last_header_line = line_str.trim().to_string();
-        } else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid VCF format"));
-        }
-    }
+    Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
 }
 
 fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_count: usize, debug: bool) -> (f64, usize, usize) {
