@@ -34,8 +34,9 @@ This Rust-based tool calculates polygenic scores from VCF (Variant Call Format) 
 Run the program with the following command:
 
 ```
-cargo run --release -- -v <path_to_vcf_file> -s <path_to_scoring_file> --output <path_to_output_file> [--info]
+cargo run --release -- -v <path_to_vcf_file> -s <path_to_scoring_file> --output <path_to_output_file>
 ```
+Add the ```--info``` flag for additional information.
 
 ### Command-line Arguments
 
