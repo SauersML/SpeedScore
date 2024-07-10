@@ -1,10 +1,9 @@
-use std::collections::HashMap; // Import HashMap
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader};
-use std::time::Instant; // Import Instant
+use std::time::Instant;
 use flate2::read::GzDecoder;
 
-// Custom error type for our operations
 #[derive(Debug)]
 pub enum VcfError {
     Io(io::Error),
@@ -44,12 +43,10 @@ impl From<std::string::FromUtf8Error> for VcfError {
     }
 }
 
-// A trait for reading lines that works with both regular and gzipped files
 trait LineReader {
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError>;
 }
 
-// Implement LineReader for BufReader<File>
 impl LineReader for BufReader<File> {
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
         buf.clear();
@@ -57,7 +54,6 @@ impl LineReader for BufReader<File> {
     }
 }
 
-// Implement LineReader for BufReader<GzDecoder<File>>
 impl LineReader for BufReader<GzDecoder<File>> {
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
         buf.clear();
@@ -65,7 +61,6 @@ impl LineReader for BufReader<GzDecoder<File>> {
     }
 }
 
-// A struct to hold our VCF reader and its metadata
 struct VcfReader {
     reader: Box<dyn LineReader>,
     sample_count: usize,
@@ -124,9 +119,13 @@ pub fn calculate_polygenic_score_multi(
     let mut total_matched = 0;
 
     while vcf_reader.reader.read_line(&mut line)? > 0 {
+        if debug {
+            println!("Reading line: {}", line);
+        }
+
         if !line.starts_with('#') {
             if debug {
-                println!("Processing line: {}", line);
+                println!("Processing variant line: {}", line);
             }
             let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
             total_score += score;
@@ -136,6 +135,8 @@ pub fn calculate_polygenic_score_multi(
             if debug && total_variants % 100_000 == 0 {
                 println!("Processed {} variants", total_variants);
             }
+        } else if debug {
+            println!("Skipping header/comment line: {}", line);
         }
     }
 
@@ -157,6 +158,10 @@ fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_cou
     let mut parts = line.split('\t');
     let chr = parts.next().and_then(|s| s.parse::<u8>().ok());
     let pos = parts.next().and_then(|s| s.parse::<u32>().ok());
+
+    if debug {
+        println!("Parsed chr: {:?}, pos: {:?}", chr, pos);
+    }
 
     if let (Some(chr), Some(pos)) = (chr, pos) {
         if let Some(&weight) = effect_weights.get(&(chr, pos)) {
