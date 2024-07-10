@@ -17,11 +17,9 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     let sample_count = header.split('\t').count() - 9;
 
     let (total_score, total_variants, total_matched) = lines
-        .collect::<io::Result<Vec<_>>>()?
-        .into_par_iter()
+        .filter_map(Result::ok)
         .map(|line| process_line(&line, effect_weights, sample_count))
-        .reduce(|| (0.0, 0, 0),
-                |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
+        .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
 
     Ok((total_score / sample_count as f64, total_variants, total_matched))
 }
