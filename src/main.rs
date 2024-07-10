@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let (score, total_variants, matched_variants) = match file_type {
         FileType::SingleSample => single_sample::calculate_polygenic_score(&args.vcf, &effect_weights)?,
-        FileType::MultiSample => multi_sample::calculate_polygenic_score_multi(&args.vcf, &effect_weights)?,
+        FileType::MultiSample => multi_sample::calculate_polygenic_score_multi(&args.vcf, &effect_weights, args.info)?,
     };
 
     let duration = start.elapsed();
