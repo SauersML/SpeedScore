@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::time::Duration;
 use clap::Parser;
+use flate2::read::GzDecoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -23,37 +24,37 @@ pub struct Args {
 pub enum FileType {
     SingleSample,
     MultiSample,
-    Gzipped,
 }
 
 impl FileType {
     pub fn detect(path: &str) -> io::Result<Self> {
         let file = File::open(path)?;
-        let mut reader = BufReader::new(file);
-        let mut buffer = Vec::new();
-
-        if path.ends_with(".gz") {
-            Ok(FileType::Gzipped)
+        let mut reader: Box<dyn BufRead> = if path.ends_with(".gz") {
+            Box::new(BufReader::new(GzDecoder::new(file)))
         } else {
-            reader.read_until(b'\n', &mut buffer)?;
-            if buffer.starts_with(b"##fileformat=VCF") {
-                reader.read_until(b'\n', &mut buffer)?;
-                while buffer.starts_with(b"##") {
-                    buffer.clear();
-                    reader.read_until(b'\n', &mut buffer)?;
-                }
-                let sample_count = buffer.split(|&b| b == b'\t').count() - 9;
-                if sample_count > 1 {
-                    Ok(FileType::MultiSample)
-                } else {
-                    Ok(FileType::SingleSample)
-                }
-            } else {
-                Err(io::Error::new(io::ErrorKind::InvalidData, "Not a VCF file"))
-            }
+            Box::new(BufReader::new(file))
+        };
+
+        let mut buffer = String::new();
+        reader.read_line(&mut buffer)?;
+
+        if !buffer.starts_with("##fileformat=VCF") {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a VCF file"));
         }
+
+        buffer.clear();
+        while reader.read_line(&mut buffer)? > 0 {
+            if buffer.starts_with("#CHROM") {
+                let sample_count = buffer.split('\t').count() - 9;
+                return Ok(if sample_count > 1 { FileType::MultiSample } else { FileType::SingleSample });
+            }
+            buffer.clear();
+        }
+
+        Err(io::Error::new(io::ErrorKind::InvalidData, "VCF header not found"))
     }
 }
+
 
 pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(u8, u32), f32>> {
     let file = File::open(path)?;
