@@ -30,30 +30,29 @@ impl<R: Read + Seek> Read for ResilienceReader<R> {
     }
 }
 
+
 pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>, debug: bool) -> io::Result<(f64, usize, usize)> {
     if debug {
         println!("Opening file: {}", path);
     }
-    let file = File::open(path).map_err(|e| io::Error::new(e.kind(), format!("Failed to open file '{}': {}", path, e)))?;
+    let file = File::open(path)?;
     
-    let reader: Box<dyn Read> = if path.ends_with(".gz") {
+    let mut reader: Box<dyn BufRead> = if path.ends_with(".gz") {
         if debug {
-            println!("Detected gzipped file, using GzDecoder with ResilienceReader");
+            println!("Detected gzipped file, using GzDecoder");
         }
-        Box::new(GzDecoder::new(ResilienceReader::new(file)))
+        Box::new(BufReader::new(GzDecoder::new(file)))
     } else {
         if debug {
-            println!("Using standard File reader with ResilienceReader");
+            println!("Using standard File reader");
         }
-        Box::new(ResilienceReader::new(file))
+        Box::new(BufReader::new(file))
     };
-
-    let mut reader = BufReader::new(reader);
 
     if debug {
         println!("Searching for header...");
     }
-    let header = find_header(&mut reader).map_err(|e| io::Error::new(e.kind(), format!("Failed to find header: {}", e)))?;
+    let header = find_header(&mut reader)?;
     let sample_count = header.split('\t').count() - 9;
 
     if debug {
@@ -63,42 +62,27 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     }
 
     let mut line = String::new();
-    let mut line_count = 0;
     let mut total_score = 0.0;
     let mut total_variants = 0;
     let mut total_matched = 0;
 
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // End of file
-            Ok(_) => {
-                if debug && line_count < 5 {
-                    println!("Line {}: {}", line_count + 1, line.trim());
-                }
-                let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
-                total_score += score;
-                total_variants += variants;
-                total_matched += matched;
-                line_count += 1;
-                if debug && line_count % 100_000 == 0 {
-                    println!("Processed {} lines", line_count);
-                }
-            }
-            Err(e) => {
-                if debug {
-                    println!("Error reading line {}: {}", line_count + 1, e);
-                }
-                // Skip this line and continue
-                continue;
+    while reader.read_line(&mut line)? > 0 {
+        if !line.starts_with('#') {
+            let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
+            total_score += score;
+            total_variants += variants;
+            total_matched += matched;
+            if debug && total_variants % 100_000 == 0 {
+                println!("Processed {} variants", total_variants);
             }
         }
+        line.clear();
     }
 
     if debug {
-        println!("Total lines processed: {}", line_count);
-        if line_count == 0 {
-            println!("Warning: No lines were processed after the header!");
+        println!("Total variants processed: {}", total_variants);
+        if total_variants == 0 {
+            println!("Warning: No variants were processed after the header!");
         }
     }
 
@@ -115,6 +99,7 @@ fn find_header(reader: &mut dyn BufRead) -> io::Result<String> {
         }
     }
 }
+
 
 fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_count: usize, debug: bool) -> (f64, usize, usize) {
     let mut parts = line.split('\t');
