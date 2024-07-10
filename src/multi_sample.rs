@@ -125,6 +125,9 @@ pub fn calculate_polygenic_score_multi(
 
     while vcf_reader.reader.read_line(&mut line)? > 0 {
         if !line.starts_with('#') {
+            if debug {
+                println!("Processing line: {}", line);
+            }
             let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
             total_score += score;
             total_variants += variants;
@@ -157,6 +160,9 @@ fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_cou
 
     if let (Some(chr), Some(pos)) = (chr, pos) {
         if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+            if debug {
+                println!("Found matching weight for chr: {}, pos: {}", chr, pos);
+            }
             let genotypes: Vec<&str> = parts.skip(7).take(sample_count).collect();
             let (score, matched) = genotypes.iter()
                 .map(|&gt| match gt.chars().next() {
@@ -171,6 +177,14 @@ fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_cou
             }
             
             return (score, 1, matched);
+        } else {
+            if debug {
+                println!("No matching weight for chr: {}, pos: {}", chr, pos);
+            }
+        }
+    } else {
+        if debug {
+            println!("Could not parse chr or pos from line: {}", line);
         }
     }
     
