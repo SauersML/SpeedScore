@@ -103,6 +103,7 @@ pub fn calculate_polygenic_score_multi(
     
     if debug {
         println!("Opening file: {}", path);
+        println!("Effect weights loaded: {:?}", effect_weights);
     }
 
     let mut vcf_reader = VcfReader::new(path)?;
