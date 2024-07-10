@@ -16,24 +16,25 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     let header = find_header(&mut lines)?;
     if debug {
         println!("Header found: {}", header);
-    }
-
-    let sample_count = header.split('\t').count() - 9;
-    if debug {
         println!("Sample count: {}", sample_count);
+        println!("Attempting to read first few lines after header:");
+        for (i, line) in lines.take(5).enumerate() {
+            match line {
+                Ok(l) => println!("Line {}: {}", i + 1, l),
+                Err(e) => println!("Error reading line {}: {}", i + 1, e),
+            }
+        }
+        println!("End of first few lines");
     }
 
     let mut line_count = 0;
     let (total_score, total_variants, total_matched) = lines
-        .filter_map(Result::ok)
-        .map(|line| {
-            if debug {
-                line_count += 1;
-                if line_count % 100000 == 0 {
-                    println!("Processed {} lines", line_count);
-                }
+        .filter_map(|line| {
+            if debug && line_count % 100000 == 0 {
+                println!("Processing line {}", line_count);
             }
-            process_line(&line, effect_weights, sample_count, debug)
+            line_count += 1;
+            line.ok().map(|l| process_line(&l, effect_weights, sample_count))
         })
         .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
 
