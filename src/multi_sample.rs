@@ -6,14 +6,17 @@ use std::time::Instant;
 
 const BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 
-struct ResilienceReader<R: Read + Seek> {
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
+struct ResilienceReader<R: ReadSeek> {
     inner: R,
     buffer: Vec<u8>,
     pos: usize,
     cap: usize,
 }
 
-impl<R: Read + Seek> ResilienceReader<R> {
+impl<R: ReadSeek> ResilienceReader<R> {
     fn new(inner: R) -> Self {
         Self {
             inner,
@@ -71,7 +74,7 @@ impl<R: Read + Seek> ResilienceReader<R> {
     }
 }
 
-impl<R: Read + Seek> Read for ResilienceReader<R> {
+impl<R: ReadSeek> Read for ResilienceReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.pos >= self.cap {
             self.fill_buffer()?;
@@ -86,7 +89,7 @@ impl<R: Read + Seek> Read for ResilienceReader<R> {
     }
 }
 
-impl<R: Read + Seek> Seek for ResilienceReader<R> {
+impl<R: ReadSeek> Seek for ResilienceReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.pos = 0;
         self.cap = 0;
@@ -102,7 +105,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     }
     let file = File::open(path)?;
     
-    let mut reader: Box<dyn Read + Seek> = if path.ends_with(".gz") {
+    let mut reader: Box<dyn ReadSeek> = if path.ends_with(".gz") {
         if debug {
             println!("Detected gzipped file, using GzDecoder with ResilienceReader");
         }
@@ -117,7 +120,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     if debug {
         println!("Searching for VCF data start...");
     }
-    let (header, sample_count) = find_vcf_start(&mut reader)?;
+    let (header, sample_count) = find_vcf_start(&mut *reader)?;
 
     if debug {
         println!("VCF data start found. Header: {}", header);
@@ -169,7 +172,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     Ok((total_score / sample_count as f64, total_variants, total_matched))
 }
 
-fn find_vcf_start(reader: &mut (dyn Read + Seek)) -> io::Result<(String, usize)> {
+fn find_vcf_start(reader: &mut dyn ReadSeek) -> io::Result<(String, usize)> {
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
     let mut last_header_line = String::new();
