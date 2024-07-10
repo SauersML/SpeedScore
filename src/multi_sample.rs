@@ -1,28 +1,31 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, BufRead, BufReader};
+use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
 use flate2::read::GzDecoder;
 
-struct ResilienceGzDecoder<R> {
+struct ResilienceGzDecoder<R: Read + Seek> {
     inner: GzDecoder<R>,
+    source: R,
     recovery_attempts: usize,
 }
 
-impl<R: Read> ResilienceGzDecoder<R> {
-    fn new(inner: R) -> Self {
+impl<R: Read + Seek> ResilienceGzDecoder<R> {
+    fn new(source: R) -> Self {
         Self {
-            inner: GzDecoder::new(inner),
+            inner: GzDecoder::new(source.try_clone().expect("Failed to clone reader")),
+            source,
             recovery_attempts: 0,
         }
     }
 }
 
-impl<R: Read> Read for ResilienceGzDecoder<R> {
+impl<R: Read + Seek> Read for ResilienceGzDecoder<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.inner.read(buf) {
             Ok(0) if self.recovery_attempts < 3 => {
                 self.recovery_attempts += 1;
-                self.inner.reset_data();
+                self.source.seek(SeekFrom::Start(0))?;
+                self.inner = GzDecoder::new(self.source.try_clone().expect("Failed to clone reader"));
                 self.read(buf)
             }
             result => result,
