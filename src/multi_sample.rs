@@ -118,10 +118,12 @@ pub fn calculate_polygenic_score_multi(
     let mut total_score = 0.0;
     let mut total_variants = 0;
     let mut total_matched = 0;
+    let mut lines_processed = 0;
 
     while vcf_reader.reader.read_line(&mut line)? > 0 {
-        if debug {
-            println!("Reading line: {}", line);
+        lines_processed += 1;
+        if debug && lines_processed <= 5 {
+            println!("Example VCF line: {}", line);
         }
 
         if !line.starts_with('#') {
@@ -171,7 +173,7 @@ fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_cou
             }
             let genotypes: Vec<&str> = parts.skip(7).take(sample_count).collect();
             if debug {
-                println!("Genotypes: {:?}", genotypes);
+                println!("Genotypes: {:?}", genotypes.iter().take(5).collect::<Vec<_>>());
             }
             let (score, matched) = genotypes.iter()
                 .map(|&gt| match gt.chars().next() {
