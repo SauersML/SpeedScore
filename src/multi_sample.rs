@@ -6,17 +6,30 @@ use std::time::Instant;
 
 const BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 
+trait ReadOnly: Read {}
+impl<T: Read> ReadOnly for T {}
+
 trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek> ReadSeek for T {}
 
-struct ResilienceReader<R: ReadSeek> {
+struct GzDecoderWrapper<R: Read>(GzDecoder<R>);
+
+impl<R: Read> Read for GzDecoderWrapper<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl<R: Read> ReadOnly for GzDecoderWrapper<R> {}
+
+struct ResilienceReader<R: ReadOnly> {
     inner: R,
     buffer: Vec<u8>,
     pos: usize,
     cap: usize,
 }
 
-impl<R: ReadSeek> ResilienceReader<R> {
+impl<R: ReadOnly> ResilienceReader<R> {
     fn new(inner: R) -> Self {
         Self {
             inner,
@@ -74,7 +87,7 @@ impl<R: ReadSeek> ResilienceReader<R> {
     }
 }
 
-impl<R: ReadSeek> Read for ResilienceReader<R> {
+impl<R: ReadOnly> Read for ResilienceReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.pos >= self.cap {
             self.fill_buffer()?;
@@ -89,14 +102,6 @@ impl<R: ReadSeek> Read for ResilienceReader<R> {
     }
 }
 
-impl<R: ReadSeek> Seek for ResilienceReader<R> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.pos = 0;
-        self.cap = 0;
-        self.inner.seek(pos)
-    }
-}
-
 pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>, debug: bool) -> io::Result<(f64, usize, usize)> {
     let start_time = Instant::now();
     
@@ -105,11 +110,11 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     }
     let file = File::open(path)?;
     
-    let mut reader: Box<dyn ReadSeek> = if path.ends_with(".gz") {
+    let reader: Box<dyn ReadOnly> = if path.ends_with(".gz") {
         if debug {
             println!("Detected gzipped file, using GzDecoder with ResilienceReader");
         }
-        Box::new(ResilienceReader::new(GzDecoder::new(file)))
+        Box::new(ResilienceReader::new(GzDecoderWrapper(GzDecoder::new(file))))
     } else {
         if debug {
             println!("Using standard ResilienceReader");
@@ -120,7 +125,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     if debug {
         println!("Searching for VCF data start...");
     }
-    let (header, sample_count) = find_vcf_start(&mut *reader)?;
+    let (header, sample_count) = find_vcf_start(reader)?;
 
     if debug {
         println!("VCF data start found. Header: {}", header);
@@ -128,6 +133,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
         println!("Processing variants...");
     }
 
+    let mut reader = header.reader;
     let mut line_buffer = Vec::new();
     let mut total_score = 0.0;
     let mut total_variants = 0;
@@ -172,22 +178,32 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     Ok((total_score / sample_count as f64, total_variants, total_matched))
 }
 
-fn find_vcf_start(reader: &mut dyn ReadSeek) -> io::Result<(String, usize)> {
-    let mut buf_reader = BufReader::new(reader);
-    let mut line = String::new();
+struct HeaderInfo {
+    header: String,
+    sample_count: usize,
+    reader: Box<dyn ReadOnly>,
+}
+
+fn find_vcf_start(mut reader: Box<dyn ReadOnly>) -> io::Result<HeaderInfo> {
+    let mut line = Vec::new();
     let mut last_header_line = String::new();
 
     loop {
         line.clear();
-        if buf_reader.read_line(&mut line)? == 0 {
+        if reader.read_until(b'\n', &mut line)? == 0 {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "VCF header not found"));
         }
 
-        if line.starts_with("#CHROM") {
-            let sample_count = line.split_whitespace().count() - 9;
-            return Ok((last_header_line, sample_count));
-        } else if line.starts_with('#') {
-            last_header_line = line.trim().to_string();
+        let line_str = String::from_utf8_lossy(&line);
+        if line_str.starts_with("#CHROM") {
+            let sample_count = line_str.split_whitespace().count() - 9;
+            return Ok(HeaderInfo {
+                header: last_header_line,
+                sample_count,
+                reader,
+            });
+        } else if line_str.starts_with('#') {
+            last_header_line = line_str.trim().to_string();
         } else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid VCF format"));
         }
