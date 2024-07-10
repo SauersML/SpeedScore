@@ -1,10 +1,6 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader};
 use flate2::read::GzDecoder;
-use std::time::Instant;
-
-const BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 
 // Custom error type for our operations
 #[derive(Debug)]
