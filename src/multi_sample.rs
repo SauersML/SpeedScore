@@ -3,7 +3,6 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::time::Instant;
 use flate2::read::GzDecoder;
-use regex::Regex;
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -101,7 +100,7 @@ pub fn calculate_polygenic_score_multi(
     debug: bool
 ) -> Result<(f64, usize, usize), VcfError> {
     let start_time = Instant::now();
-    
+
     if debug {
         println!("Opening file: {}", path);
         println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
@@ -120,18 +119,24 @@ pub fn calculate_polygenic_score_multi(
     let mut total_variants = 0;
     let mut total_matched = 0;
     let mut lines_processed = 0;
-
-    // Regex to identify VCF data lines
-    let vcf_data_regex = Regex::new(r"^\d+\t\d+\t\S+\t\S+\t\S+\t\S+\t\S+\t\S+\t\S+").unwrap();
+    let mut in_data_section = false;
 
     while vcf_reader.reader.read_line(&mut line)? > 0 {
         lines_processed += 1;
+        
         if debug && lines_processed <= 5 {
-            println!("Example VCF line: {}", line);
+            println!("Line read: {}", line);
         }
 
-        // Improved check for variant lines
-        if vcf_data_regex.is_match(&line) {
+        if line.starts_with("#CHROM") {
+            in_data_section = true;
+            if debug {
+                println!("Found #CHROM line: {}", line);
+            }
+            continue;
+        }
+
+        if in_data_section {
             if debug {
                 println!("Processing variant line: {}", line);
             }
@@ -144,7 +149,7 @@ pub fn calculate_polygenic_score_multi(
                 println!("Processed {} variants", total_variants);
             }
         } else if debug {
-            println!("Skipping non-variant line: {}", line);
+            println!("Skipping header/comment line: {}", line);
         }
     }
 
