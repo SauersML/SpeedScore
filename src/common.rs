@@ -3,7 +3,6 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::time::Duration;
 use clap::Parser;
-use flate2::read::GzDecoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
