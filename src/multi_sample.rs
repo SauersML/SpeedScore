@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, BufReader};
+use std::io::{self, Read, BufRead, BufReader};
 use flate2::read::GzDecoder;
 
 struct ResilienceGzDecoder<R> {
