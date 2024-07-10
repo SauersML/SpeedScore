@@ -1,6 +1,5 @@
 use std::time::Instant;
 use clap::Parser;
-use std::path::Path;
 
 mod common;
 mod single_sample;
