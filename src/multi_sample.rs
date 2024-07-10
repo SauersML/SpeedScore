@@ -103,7 +103,7 @@ pub fn calculate_polygenic_score_multi(
     
     if debug {
         println!("Opening file: {}", path);
-        println!("Effect weights loaded: {:?}", effect_weights);
+        println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
     }
 
     let mut vcf_reader = VcfReader::new(path)?;
@@ -170,6 +170,9 @@ fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_cou
                 println!("Found matching weight for chr: {}, pos: {}", chr, pos);
             }
             let genotypes: Vec<&str> = parts.skip(7).take(sample_count).collect();
+            if debug {
+                println!("Genotypes: {:?}", genotypes);
+            }
             let (score, matched) = genotypes.iter()
                 .map(|&gt| match gt.chars().next() {
                     Some('0') => (0.0, 1),
