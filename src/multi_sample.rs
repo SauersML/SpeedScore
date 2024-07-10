@@ -4,7 +4,7 @@ use std::io::{self, BufRead, BufReader};
 use rayon::prelude::*;
 use flate2::read::GzDecoder;
 
-pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>) -> io::Result<(f64, usize, usize)> {
+pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>, debug: bool) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
     let reader: Box<dyn BufRead> = if path.ends_with(".gz") {
         Box::new(BufReader::new(GzDecoder::new(file)))
@@ -14,12 +14,32 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
 
     let mut lines = reader.lines();
     let header = find_header(&mut lines)?;
-    let sample_count = header.split('\t').count() - 9;
+    if debug {
+        println!("Header found: {}", header);
+    }
 
+    let sample_count = header.split('\t').count() - 9;
+    if debug {
+        println!("Sample count: {}", sample_count);
+    }
+
+    let mut line_count = 0;
     let (total_score, total_variants, total_matched) = lines
         .filter_map(Result::ok)
-        .map(|line| process_line(&line, effect_weights, sample_count))
+        .map(|line| {
+            if debug {
+                line_count += 1;
+                if line_count % 100000 == 0 {
+                    println!("Processed {} lines", line_count);
+                }
+            }
+            process_line(&line, effect_weights, sample_count, debug)
+        })
         .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
+
+    if debug {
+        println!("Total lines processed: {}", line_count);
+    }
 
     Ok((total_score / sample_count as f64, total_variants, total_matched))
 }
@@ -34,12 +54,15 @@ fn find_header<B: BufRead>(lines: &mut std::io::Lines<B>) -> io::Result<String> 
     Err(io::Error::new(io::ErrorKind::InvalidData, "Header not found"))
 }
 
-fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_count: usize) -> (f64, usize, usize) {
+fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_count: usize, debug: bool) -> (f64, usize, usize) {
     let mut parts = line.split('\t');
     let chr = parts.next().and_then(|s| s.parse::<u8>().ok());
     let pos = parts.next().and_then(|s| s.parse::<u32>().ok());
 
     if let (Some(chr), Some(pos)) = (chr, pos) {
+        if debug {
+            println!("Processing variant: Chr {}, Pos {}", chr, pos);
+        }
         if let Some(&weight) = effect_weights.get(&(chr, pos)) {
             let genotypes: Vec<&str> = parts.skip(7).take(sample_count).collect();
             let (score, matched) = genotypes.iter()
