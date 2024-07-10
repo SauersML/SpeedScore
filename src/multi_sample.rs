@@ -11,8 +11,9 @@ struct ResilienceGzDecoder<R: Read + Seek> {
 
 impl<R: Read + Seek> ResilienceGzDecoder<R> {
     fn new(source: R) -> Self {
+        let inner = GzDecoder::new(source.by_ref());
         Self {
-            inner: GzDecoder::new(source.try_clone().expect("Failed to clone reader")),
+            inner,
             source,
             recovery_attempts: 0,
         }
@@ -25,7 +26,7 @@ impl<R: Read + Seek> Read for ResilienceGzDecoder<R> {
             Ok(0) if self.recovery_attempts < 3 => {
                 self.recovery_attempts += 1;
                 self.source.seek(SeekFrom::Start(0))?;
-                self.inner = GzDecoder::new(self.source.try_clone().expect("Failed to clone reader"));
+                self.inner = GzDecoder::new(self.source.by_ref());
                 self.read(buf)
             }
             result => result,
