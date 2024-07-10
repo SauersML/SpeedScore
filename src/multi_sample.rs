@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, BufRead, BufReader};
+use std::io::{self, BufReader};
 use flate2::read::GzDecoder;
 use std::time::Instant;
 
@@ -8,10 +8,30 @@ const BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 
 // Custom error type for our operations
 #[derive(Debug)]
-enum VcfError {
+pub enum VcfError {
     Io(io::Error),
     InvalidFormat(String),
     Utf8Error(std::string::FromUtf8Error),
+}
+
+impl std::fmt::Display for VcfError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VcfError::Io(err) => write!(f, "I/O error: {}", err),
+            VcfError::InvalidFormat(msg) => write!(f, "Invalid VCF format: {}", msg),
+            VcfError::Utf8Error(err) => write!(f, "UTF-8 error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for VcfError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            VcfError::Io(err) => Some(err),
+            VcfError::InvalidFormat(_) => None,
+            VcfError::Utf8Error(err) => Some(err),
+        }
+    }
 }
 
 impl From<io::Error> for VcfError {
@@ -35,7 +55,7 @@ trait LineReader {
 impl LineReader for BufReader<File> {
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
         buf.clear();
-        Ok(self.read_line(buf)?)
+        Ok(io::BufRead::read_line(self, buf)?)
     }
 }
 
@@ -43,7 +63,7 @@ impl LineReader for BufReader<File> {
 impl LineReader for BufReader<GzDecoder<File>> {
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
         buf.clear();
-        Ok(self.read_line(buf)?)
+        Ok(io::BufRead::read_line(self, buf)?)
     }
 }
 
