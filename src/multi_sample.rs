@@ -1,5 +1,7 @@
+use std::collections::HashMap; // Import HashMap
 use std::fs::File;
 use std::io::{self, BufReader};
+use std::time::Instant; // Import Instant
 use flate2::read::GzDecoder;
 
 // Custom error type for our operations
