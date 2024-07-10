@@ -14,7 +14,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     let mut lines = reader.lines();
     let header = find_header(&mut lines)?;
     let sample_count = header.split('\t').count() - 9;
-    
+
     if debug {
         println!("Header found: {}", header);
         println!("Sample count: {}", sample_count);
@@ -29,15 +29,22 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     }
 
     let mut line_count = 0;
-    let (total_score, total_variants, total_matched) = lines
-        .filter_map(|line| {
-            if debug && line_count % 100000 == 0 {
+    let mut total_score = 0.0;
+    let mut total_variants = 0;
+    let mut total_matched = 0;
+
+    for line in lines {
+        if let Ok(line) = line {
+            if debug && line_count % 100_000 == 0 {
                 println!("Processing line {}", line_count);
             }
+            let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
+            total_score += score;
+            total_variants += variants;
+            total_matched += matched;
             line_count += 1;
-            line.ok().map(|l| process_line(&l, effect_weights, sample_count, debug))
-        })
-        .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
+        }
+    }
 
     if debug {
         println!("Total lines processed: {}", line_count);
@@ -47,7 +54,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
 }
 
 fn find_header<B: BufRead>(lines: &mut std::io::Lines<B>) -> io::Result<String> {
-    for line in lines {
+    for line in lines.by_ref() {
         let line = line?;
         if line.starts_with("#CHROM") {
             return Ok(line);
