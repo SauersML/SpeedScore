@@ -3,15 +3,28 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use flate2::read::GzDecoder;
 
+
 pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8, u32), f32>, debug: bool) -> io::Result<(f64, usize, usize)> {
+    if debug {
+        println!("Opening file: {}", path);
+    }
     let file = File::open(path)?;
     let reader: Box<dyn BufRead> = if path.ends_with(".gz") {
+        if debug {
+            println!("Detected gzipped file, using GzDecoder");
+        }
         Box::new(BufReader::new(GzDecoder::new(file)))
     } else {
+        if debug {
+            println!("Using standard BufReader");
+        }
         Box::new(BufReader::new(file))
     };
 
     let mut lines = reader.lines();
+    if debug {
+        println!("Searching for header...");
+    }
     let header = find_header(&mut lines)?;
     let sample_count = header.split('\t').count() - 9;
 
@@ -19,13 +32,31 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
         println!("Header found: {}", header);
         println!("Sample count: {}", sample_count);
         println!("Attempting to read first few lines after header:");
-        for (i, line) in lines.by_ref().take(5).enumerate() {
-            match line {
-                Ok(l) => println!("Line {}: {}", i + 1, l),
-                Err(e) => println!("Error reading line {}: {}", i + 1, e),
+    }
+    
+    let mut first_lines = Vec::new();
+    for (i, line) in lines.by_ref().take(5).enumerate() {
+        match line {
+            Ok(l) => {
+                if debug {
+                    println!("Line {}: {}", i + 1, l);
+                }
+                first_lines.push(l);
+            },
+            Err(e) => {
+                if debug {
+                    println!("Error reading line {}: {}", i + 1, e);
+                }
+                return Err(e);
             }
         }
+    }
+    
+    if debug {
         println!("End of first few lines");
+        if first_lines.is_empty() {
+            println!("Warning: No lines read after header!");
+        }
     }
 
     let mut line_count = 0;
@@ -33,16 +64,35 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
     let mut total_variants = 0;
     let mut total_matched = 0;
 
+    // Process the first few lines we've already read
+    for line in first_lines {
+        let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
+        total_score += score;
+        total_variants += variants;
+        total_matched += matched;
+        line_count += 1;
+    }
+
+    // Process the rest of the lines
     for line in lines {
-        if let Ok(line) = line {
-            if debug && line_count % 100_000 == 0 {
-                println!("Processing line {}", line_count);
+        match line {
+            Ok(line) => {
+                if debug && line_count % 100_000 == 0 {
+                    println!("Processing line {}", line_count);
+                }
+                let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
+                total_score += score;
+                total_variants += variants;
+                total_matched += matched;
+                line_count += 1;
+            },
+            Err(e) => {
+                if debug {
+                    println!("Error reading line: {}", e);
+                }
+                // Decide whether to break or continue based on the error
+                break;
             }
-            let (score, variants, matched) = process_line(&line, effect_weights, sample_count, debug);
-            total_score += score;
-            total_variants += variants;
-            total_matched += matched;
-            line_count += 1;
         }
     }
 
@@ -52,6 +102,7 @@ pub fn calculate_polygenic_score_multi(path: &str, effect_weights: &HashMap<(u8,
 
     Ok((total_score / sample_count as f64, total_variants, total_matched))
 }
+
 
 fn find_header<B: BufRead>(lines: &mut std::io::Lines<B>) -> io::Result<String> {
     for line in lines.by_ref() {
