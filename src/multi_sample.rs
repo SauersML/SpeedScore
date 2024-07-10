@@ -94,6 +94,7 @@ impl VcfReader {
     }
 }
 
+
 pub fn calculate_polygenic_score_multi(
     path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -121,12 +122,16 @@ pub fn calculate_polygenic_score_multi(
     let mut lines_processed = 0;
     let mut in_data_section = false;
 
+    if debug {
+        println!("Starting to read lines...");
+    }
+
     while vcf_reader.reader.read_line(&mut line)? > 0 {
-        lines_processed += 1;
-        
-        if debug && lines_processed <= 5 {
+        if debug {
             println!("Line read: {}", line);
         }
+
+        lines_processed += 1;
 
         if line.starts_with("#CHROM") {
             in_data_section = true;
@@ -148,14 +153,17 @@ pub fn calculate_polygenic_score_multi(
             if debug && total_variants % 100_000 == 0 {
                 println!("Processed {} variants", total_variants);
             }
-        } else if debug {
-            println!("Skipping header/comment line: {}", line);
+        } else {
+            if debug {
+                println!("Skipping header/comment line: {}", line);
+            }
         }
     }
 
     let duration = start_time.elapsed();
 
     if debug {
+        println!("Finished reading lines.");
         println!("Total variants processed: {}", total_variants);
         println!("Matched variants: {}", total_matched);
         println!("Processing time: {:?}", duration);
