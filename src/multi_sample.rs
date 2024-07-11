@@ -104,9 +104,16 @@ pub fn calculate_polygenic_score_multi(
     let mut total_matched = 0;
     let mut in_data_section = false;
     let mut lines_processed = 0;
+    let mut current_chr = 0;
+    let mut chr_variants = 0;
+    let total_weights = effect_weights.len();
+
+    // Determine the maximum chromosome number in the effect weights
+    let max_chr = effect_weights.keys().map(|&(chr, _)| chr).max().unwrap_or(0);
 
     if debug {
-        println!("Starting to read lines...");
+        println!("Total variants to process: {}", total_weights);
+        println!("Maximum chromosome number: {}", max_chr);
     }
 
     while vcf_reader.read_line(&mut line)? > 0 {
@@ -131,8 +138,25 @@ pub fn calculate_polygenic_score_multi(
             total_variants += variants;
             total_matched += matched;
 
-            if debug && total_variants % 100_000 == 0 {
-                println!("Processed {} variants", total_variants);
+            // Update progress information
+            if variants > 0 {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if let Ok(chr) = parts[0].parse::<u8>() {
+                    if chr != current_chr {
+                        if current_chr != 0 {
+                            println!("Finished processing chromosome {}. Processed {} variants.", current_chr, chr_variants);
+                        }
+                        current_chr = chr;
+                        chr_variants = 0;
+                    }
+                    chr_variants += 1;
+
+                    if chr_variants % 10000 == 0 || total_variants % 100000 == 0 {
+                        let progress_percentage = (total_matched as f64 / total_weights as f64 * 100.0).min(100.0);
+                        println!("Progress: Processing chromosome {} ({} variants) - Overall: {:.2}% complete ({}/{} variants matched)",
+                                 current_chr, chr_variants, progress_percentage, total_matched, total_weights);
+                    }
+                }
             }
         }
     }
@@ -140,7 +164,8 @@ pub fn calculate_polygenic_score_multi(
     let duration = start_time.elapsed();
 
     if debug {
-        println!("Finished reading lines.");
+        println!("Finished processing chromosome {}. Processed {} variants.", current_chr, chr_variants);
+        println!("Finished reading all lines.");
         println!("Total variants processed: {}", total_variants);
         println!("Matched variants: {}", total_matched);
         println!("Processing time: {:?}", duration);
@@ -151,6 +176,11 @@ pub fn calculate_polygenic_score_multi(
 
     Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
 }
+
+
+
+
+
 
 
 
