@@ -18,7 +18,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (score, total, matched)
         },
         FileType::MultiSample => {
-            let output_path = args.output.clone().unwrap_or_else(|| format!("{}.csv", args.vcf));
+            let output_path = if args.output.is_empty() {
+                format!("{}.csv", args.vcf)
+            } else {
+                args.output.clone()
+            };
             let (avg_score, total, matched) = multi_sample::calculate_polygenic_score_multi(
                 &args.vcf,
                 &effect_weights,
