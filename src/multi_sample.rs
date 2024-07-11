@@ -88,8 +88,6 @@ fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfErr
 
 
 
-
-
 pub fn calculate_polygenic_score_multi(
     path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -105,13 +103,7 @@ pub fn calculate_polygenic_score_multi(
     println!("VCF data start found.");
     println!("Total samples in VCF: {}", vcf_reader.sample_count.separate_with_commas());
     println!("Processing all {} samples simultaneously...", vcf_reader.sample_count.separate_with_commas());
-
-    // Set up progress bar immediately
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::default_spinner()
-        .template("{spinner:.green} [{elapsed_precise}] {msg}")
-        .unwrap());
-    pb.set_message("Starting processing...");
+    println!("Processing variants...");
 
     let mut line = String::new();
     let mut total_score = 0.0;
@@ -120,7 +112,7 @@ pub fn calculate_polygenic_score_multi(
     let mut in_data_section = false;
     let mut lines_processed = 0;
 
-    // Immediately output initial progress
+    // Immediate initial progress output
     println!("Initial progress:");
     println!("Lines processed: 0");
     println!("Variants processed: 0");
@@ -128,18 +120,18 @@ pub fn calculate_polygenic_score_multi(
     println!("Current average score per sample: 0.000000");
 
     while vcf_reader.read_line(&mut line)? > 0 {
-        lines_processed += 1;
-
         if line.starts_with("#CHROM") {
             in_data_section = true;
-            pb.set_message("Found #CHROM line, processing data...");
+            println!("Found #CHROM line, starting to process data...");
             continue;
         }
 
         if in_data_section {
-            if lines_processed <= 1000 && lines_processed % 100 == 0 {
+            lines_processed += 1;
+
+            if debug && lines_processed <= 1000 && lines_processed % 100 == 0 {
                 let truncated_line: String = line.split('\t').take(14).collect::<Vec<_>>().join("\t");
-                println!("\nLine {}: {}", lines_processed.separate_with_commas(), truncated_line);
+                println!("Line {}: {}", lines_processed.separate_with_commas(), truncated_line);
             }
 
             let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
@@ -147,24 +139,15 @@ pub fn calculate_polygenic_score_multi(
             total_variants += variants;
             total_matched += matched;
 
-            pb.set_message(format!("{} lines processed. {} variants processed, {} matched. Avg score/sample: {:.6}",
-                                   lines_processed.separate_with_commas(),
-                                   total_variants.separate_with_commas(),
-                                   total_matched.separate_with_commas(),
-                                   total_score / vcf_reader.sample_count as f64));
-
-            if lines_processed % 100_000 == 0 {
-                println!("\nDetailed progress update:");
-                println!("Lines processed: {}", lines_processed.separate_with_commas());
-                println!("Variants processed: {}", total_variants.separate_with_commas());
-                println!("Matched variants: {}", total_matched.separate_with_commas());
+            if lines_processed % 10_000 == 0 {
+                let elapsed = start_time.elapsed();
+                println!("Progress: {} lines processed in {:?}", lines_processed.separate_with_commas(), elapsed);
+                println!("Variants processed: {}, matched: {}", total_variants.separate_with_commas(), total_matched.separate_with_commas());
                 println!("Current average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
                 println!("Processing all {} samples", vcf_reader.sample_count.separate_with_commas());
             }
         }
     }
-
-    pb.finish_with_message("Processing complete");
 
     let duration = start_time.elapsed();
 
@@ -182,6 +165,14 @@ pub fn calculate_polygenic_score_multi(
 
     Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
 }
+
+
+
+
+
+
+
+
 
 
 
