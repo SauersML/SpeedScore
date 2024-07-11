@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader};
 use std::time::Instant;
 use flate2::read::{MultiGzDecoder, GzDecoder};
-use rust_htslib::bgzf;
+use rust-htslib::bgzf;
 
 #[derive(Debug)]
 pub enum VcfError {
