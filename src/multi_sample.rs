@@ -95,6 +95,7 @@ impl VcfReader {
     }
 }
 
+
 fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
     let mut reader = GzDecoder::new(file);
@@ -107,27 +108,26 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
         match reader.read_to_end(&mut buffer) {
             Ok(0) => break, // End of file
             Ok(_) => {
-                let mut window: Vec<u8> = Vec::with_capacity(201);
                 for (i, &byte) in buffer.iter().enumerate() {
-                    window.push(byte);
-                    if window.len() > 201 {
-                        window.remove(0);
-                    }
                     if byte == b'\n' {
                         // We've reached the end of a line
-                        let before: String = window.iter().take(100)
+                        let before_start = if i >= 100 { i - 100 } else { 0 };
+                        let after_end = std::cmp::min(i + 101, buffer.len());
+                        
+                        let before: String = buffer[before_start..i].iter()
                             .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
                             .collect();
-                        let after: String = buffer.iter().skip(i + 1).take(100)
+                        let after: String = buffer[i+1..after_end].iter()
                             .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
                             .collect();
+                        
                         println!("Newline at position {}:", i);
                         println!("Before: {}", before);
                         println!("After:  {}", after);
-                        println!("Raw bytes before: {:?}", &window[..100]);
-                        println!("Raw bytes after:  {:?}", &buffer[i+1..std::cmp::min(i+101, buffer.len())]);
+                        println!("Raw bytes before: {:?}", &buffer[before_start..i]);
+                        println!("Raw bytes after:  {:?}", &buffer[i+1..after_end]);
                         println!("---");
-    
+
                         let line_str = String::from_utf8_lossy(&line);
                         let columns: Vec<&str> = line_str.split('\t').take(14).collect();
                         println!("Line {}: {:?}", line_count, columns);
@@ -145,15 +145,9 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
         }
     }
 
-    // Handle the last line if it doesn't end with a newline
-    if !line.is_empty() {
-        let line_str = String::from_utf8_lossy(&line);
-        let columns: Vec<&str> = line_str.split('\t').take(14).collect();
-        println!("Line {}: {:?}", line_count, columns);
-    }
-
     Ok(())
 }
+
 
 pub fn calculate_polygenic_score_multi(
     path: &str,
