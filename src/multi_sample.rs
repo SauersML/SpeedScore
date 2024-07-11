@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, Read, BufRead, BufReader};
 use std::time::Instant;
 use flate2::read::GzDecoder;
 
@@ -97,16 +97,43 @@ impl VcfReader {
 
 fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
-    let reader = BufReader::new(GzDecoder::new(file));
-    
-    for (i, line) in reader.lines().enumerate().take(1000) {
-        if i % 1 == 0 {
-            let line = line?;
-            let columns: Vec<&str> = line.split('\t').take(14).collect();
-            println!("Line {}: {:?}", i, columns);
+    let mut reader = GzDecoder::new(file);
+    let mut buffer = Vec::new();
+    let mut line = Vec::new();
+    let mut line_count = 0;
+
+    loop {
+        buffer.clear();
+        match reader.read_to_end(&mut buffer) {
+            Ok(0) => break, // End of file
+            Ok(_) => {
+                for &byte in &buffer {
+                    if byte == b'\n' {
+                        // We've reached the end of a line
+                        let line_str = String::from_utf8_lossy(&line);
+                        let columns: Vec<&str> = line_str.split('\t').take(14).collect();
+                        println!("Line {}: {:?}", line_count, columns);
+                        line.clear();
+                        line_count += 1;
+                        if line_count >= 1000 {
+                            return Ok(());
+                        }
+                    } else {
+                        line.push(byte);
+                    }
+                }
+            }
+            Err(e) => return Err(VcfError::Io(e)),
         }
     }
-    
+
+    // Handle the last line if it doesn't end with a newline
+    if !line.is_empty() {
+        let line_str = String::from_utf8_lossy(&line);
+        let columns: Vec<&str> = line_str.split('\t').take(14).collect();
+        println!("Line {}: {:?}", line_count, columns);
+    }
+
     Ok(())
 }
 
