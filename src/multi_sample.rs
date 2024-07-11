@@ -139,6 +139,7 @@ pub fn calculate_polygenic_score_multi(
                 sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>()
             ));
         }
+    }
 
 
     pb.finish_with_message("Processing complete");
