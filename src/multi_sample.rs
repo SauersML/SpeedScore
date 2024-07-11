@@ -96,12 +96,14 @@ impl VcfReader {
 }
 
 
+
 fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
     let mut reader = GzDecoder::new(file);
     let mut buffer = Vec::new();
     let mut line = Vec::new();
     let mut line_count = 0;
+    let mut total_bytes_processed = 0;
 
     loop {
         buffer.clear();
@@ -124,8 +126,6 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
                         println!("Newline at position {}:", i);
                         println!("Before: {}", before);
                         println!("After:  {}", after);
-                        println!("Raw bytes before: {:?}", &buffer[before_start..i]);
-                        println!("Raw bytes after:  {:?}", &buffer[i+1..after_end]);
                         println!("---");
 
                         let line_str = String::from_utf8_lossy(&line);
@@ -133,11 +133,13 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
                         println!("Line {}: {:?}", line_count, columns);
                         line.clear();
                         line_count += 1;
-                        if line_count >= 1000 {
-                            return Ok(());
-                        }
                     } else {
                         line.push(byte);
+                    }
+
+                    total_bytes_processed += 1;
+                    if total_bytes_processed >= 10_000 {
+                        return Ok(());
                     }
                 }
             }
@@ -147,6 +149,7 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
 
     Ok(())
 }
+
 
 
 pub fn calculate_polygenic_score_multi(
