@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
+use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -89,18 +90,14 @@ pub fn calculate_polygenic_score_multi(
 ) -> Result<(f64, usize, usize), VcfError> {
     let start_time = Instant::now();
 
-    if debug {
-        println!("Opening file: {}", path);
-        println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
-    }
+    println!("Opening file: {}", path);
+    println!("Effect weights loaded: {} variants", effect_weights.len());
 
     let mut vcf_reader = open_vcf_reader(path)?;
 
-    if debug {
-        println!("VCF data start found.");
-        println!("Sample count: {}", vcf_reader.sample_count);
-        println!("Processing variants...");
-    }
+    println!("VCF data start found.");
+    println!("Sample count: {}", vcf_reader.sample_count);
+    println!("Processing variants...");
 
     let mut line = String::new();
     let mut total_score = 0.0;
@@ -108,31 +105,25 @@ pub fn calculate_polygenic_score_multi(
     let mut total_matched = 0;
     let mut in_data_section = false;
     let mut lines_processed = 0;
-    let total_weights = effect_weights.len();
 
-    // Estimate total lines based on effect weights (this is a rough estimate)
-    let estimated_total_lines = total_weights * 2; // Multiply by 2 as a conservative estimate
-
-    if debug {
-        println!("Estimated total lines to process: {}", estimated_total_lines);
-        println!("Total samples: {}", vcf_reader.sample_count);
-    }
-
-    let progress_interval = std::cmp::max(estimated_total_lines / 100000, 10000); // Update every 1% or 1000 lines, whichever is larger
+    // Set up progress bar
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
+        .unwrap()
+        .progress_chars("#>-"));
 
     while vcf_reader.read_line(&mut line)? > 0 {
         if line.starts_with("#CHROM") {
             in_data_section = true;
-            if debug {
-                println!("Found #CHROM line: {}", line);
-            }
+            println!("Found #CHROM line, starting to process data...");
             continue;
         }
 
         if in_data_section {
             lines_processed += 1;
 
-            if debug && lines_processed <= 1000 && lines_processed % 100 == 0 {
+            if lines_processed <= 1000 && lines_processed % 100 == 0 {
                 let truncated_line: String = line.split('\t').take(14).collect::<Vec<_>>().join("\t");
                 println!("Line {}: {}", lines_processed, truncated_line);
             }
@@ -142,35 +133,41 @@ pub fn calculate_polygenic_score_multi(
             total_variants += variants;
             total_matched += matched;
 
-            // Update progress information
-            if lines_processed % progress_interval == 0 {
-                let progress_percentage = (lines_processed as f64 / estimated_total_lines as f64 * 100.0).min(100.0);
+            // Update progress bar
+            if lines_processed % 1000 == 0 {
+                pb.set_position(lines_processed as u64);
+                pb.set_message(format!("Processed {} variants, matched {}", total_variants, total_matched));
+            }
+
+            // Print detailed progress every 100,000 lines
+            if lines_processed % 100_000 == 0 {
                 let avg_score_per_sample = if vcf_reader.sample_count > 0 {
                     total_score / vcf_reader.sample_count as f64
                 } else {
                     0.0
                 };
-                println!("Progress: {:.2}% complete ({}/{} estimated lines)", 
-                         progress_percentage, lines_processed, estimated_total_lines);
-                println!("Processed {} variants, matched {} variants", total_variants, total_matched);
+                println!("\nProgress update:");
+                println!("Lines processed: {}", lines_processed);
+                println!("Variants processed: {}", total_variants);
+                println!("Matched variants: {}", total_matched);
                 println!("Current average score per sample: {:.6}", avg_score_per_sample);
-                println!("Samples processed: {}", vcf_reader.sample_count);
             }
         }
     }
 
+    pb.finish_with_message("Processing complete");
+
     let duration = start_time.elapsed();
 
-    if debug {
-        println!("Finished reading all lines.");
-        println!("Total lines processed: {}", lines_processed);
-        println!("Total variants processed: {}", total_variants);
-        println!("Matched variants: {}", total_matched);
-        println!("Final average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
-        println!("Processing time: {:?}", duration);
-        if total_variants == 0 {
-            println!("Warning: No variants were processed!");
-        }
+    println!("\nFinished reading all lines.");
+    println!("Total lines processed: {}", lines_processed);
+    println!("Total variants processed: {}", total_variants);
+    println!("Matched variants: {}", total_matched);
+    println!("Final average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
+    println!("Processing time: {:?}", duration);
+
+    if total_variants == 0 {
+        println!("Warning: No variants were processed!");
     }
 
     Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
