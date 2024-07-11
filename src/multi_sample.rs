@@ -118,7 +118,7 @@ pub fn calculate_polygenic_score_multi(
         println!("Total samples: {}", vcf_reader.sample_count);
     }
 
-    let progress_interval = std::cmp::max(estimated_total_lines / 100, 1000); // Update every 1% or 1000 lines, whichever is larger
+    let progress_interval = std::cmp::max(estimated_total_lines / 100000, 10000); // Update every 1% or 1000 lines, whichever is larger
 
     while vcf_reader.read_line(&mut line)? > 0 {
         if line.starts_with("#CHROM") {
