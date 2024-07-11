@@ -99,26 +99,38 @@ pub fn calculate_polygenic_score_multi(
     println!("Sample count: {}", vcf_reader.sample_names.len());
     println!("Processing variants...");
 
-    let pb = ProgressBar::new(0);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} lines ({per_sec}) {msg}")
-        .unwrap()
-        .progress_chars("#>-"));
+
+
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_spinner()
+        .template("{spinner:.green} [{elapsed_precise}] {msg}")
+        .unwrap());
     pb.set_message("Processing...");
 
     let mut line = String::new();
     let mut sample_data: Vec<SampleData> = vec![SampleData::default(); vcf_reader.sample_names.len()];
     let mut lines_processed = 0;
+    let mut last_chr = 0;
+    let mut last_pos = 0;
 
     while vcf_reader.read_line(&mut line)? > 0 {
         lines_processed += 1;
-        pb.set_position(lines_processed);
 
         if !line.starts_with('#') {
-            process_line(&line, effect_weights, &mut sample_data, debug);
+            let (chr, pos) = process_line(&line, effect_weights, &mut sample_data, debug);
+            
+            if debug && (chr != last_chr || pos > last_pos + 1_000_000) {
+                pb.suspend(|| {
+                    println!("\rProcessed up to Chr {}, Pos {}", chr, pos);
+                    io::stdout().flush().unwrap();
+                });
+                last_chr = chr;
+                last_pos = pos;
+            }
         }
 
-        if lines_processed % 100 == 0 {
+        if lines_processed % 1_000 == 0 {
             let lines_in_k = lines_processed as f64 / 1000.0;
             pb.set_message(format!(
                 "{:.4}K lines, {} variants, {} matched",
@@ -147,30 +159,27 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants))
 }
 
-fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) {
+fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> (u8, u32) {
     let mut parts = line.split('\t');
-    let chr = parts.next().and_then(|s| s.parse::<u8>().ok());
-    let pos = parts.next().and_then(|s| s.parse::<u32>().ok());
+    let chr = parts.next().and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
+    let pos = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
 
-    if let (Some(chr), Some(pos)) = (chr, pos) {
-        if let Some(&weight) = effect_weights.get(&(chr, pos)) {
-            let genotypes = parts.skip(7);
-            for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
-                sample.total_variants += 1;
-                match genotype.chars().next() {
-                    Some('0') => sample.matched_variants += 1,
-                    Some('1') => {
-                        sample.score += f64::from(weight);
-                        sample.matched_variants += 1;
-                    }
-                    _ => {}
+    if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+        let genotypes = parts.skip(7);
+        for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
+            sample.total_variants += 1;
+            match genotype.chars().next() {
+                Some('0') => sample.matched_variants += 1,
+                Some('1') => {
+                    sample.score += f64::from(weight);
+                    sample.matched_variants += 1;
                 }
-            }
-            if debug {
-                println!("Processed variant at Chr {}, Pos {}", chr, pos);
+                _ => {}
             }
         }
     }
+
+    (chr, pos)
 }
 
 fn write_csv_output(
