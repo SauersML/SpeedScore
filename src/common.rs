@@ -56,23 +56,57 @@ impl FileType {
 }
 
 
+
+
 pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(u8, u32), f32>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut effect_weights = HashMap::new();
+    let mut headers: Option<Vec<String>> = None;
 
-    for line in reader.lines().filter(|l| l.as_ref().map_or(false, |s| !s.starts_with('#'))) {
+    for line in reader.lines() {
         let line = line?;
+        if line.starts_with('#') {
+            continue;
+        }
+        
+        if headers.is_none() {
+            headers = Some(line.split('\t').map(String::from).collect());
+            continue;
+        }
+
+        let headers = headers.as_ref().unwrap();
         let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 5 {
-            if let (Ok(chr), Ok(pos), Ok(weight)) = (parts[0].parse::<u8>(), parts[1].parse::<u32>(), parts[4].parse::<f32>()) {
-                effect_weights.insert((chr, pos), weight);
-            }
+
+        if parts.len() != headers.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Mismatch between header and data columns"));
+        }
+
+        let chr_index = headers.iter().position(|h| h == "chr_name").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing 'chr_name' column")
+        })?;
+
+        let pos_index = headers.iter().position(|h| h == "chr_position").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing 'chr_position' column")
+        })?;
+
+        let weight_index = headers.iter().position(|h| h == "effect_weight").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing 'effect_weight' column")
+        })?;
+
+        if let (Ok(chr), Ok(pos), Ok(weight)) = (
+            parts[chr_index].parse::<u8>(),
+            parts[pos_index].parse::<u32>(),
+            parts[weight_index].parse::<f32>()
+        ) {
+            effect_weights.insert((chr, pos), weight);
         }
     }
 
     Ok(effect_weights)
 }
+
+
 
 pub fn output_results(args: &Args, score: f64, total_variants: usize, matched_variants: usize, duration: Duration, scoring_variants: usize) -> io::Result<()> {
     let output = format!(
