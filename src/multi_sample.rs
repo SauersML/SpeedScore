@@ -120,9 +120,9 @@ pub fn calculate_polygenic_score_multi(
         if !line.starts_with('#') {
             let (chr, pos) = process_line(&line, effect_weights, &mut sample_data, debug);
             
-            if debug && (chr != last_chr || pos > last_pos + 100_000_000) {
+            if debug && (chr != last_chr || pos > last_pos + 20_000_000) {
                 pb.suspend(|| {
-                    println!("\rProcessed up to Chr {}, Pos {:.3}M", chr, pos as f64 / 1_000_000.0);
+                    println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
                     io::stdout().flush().unwrap();
                 });
                 last_chr = chr;
@@ -133,13 +133,13 @@ pub fn calculate_polygenic_score_multi(
         if lines_processed % 1_000 == 0 {
             let lines_in_k = lines_processed as f64 / 1000.0;
             pb.set_message(format!(
-                "{:.4}K lines, {} variants, {} matched",
+                "{:.3}K lines, {} variants, {} matched",
                 lines_in_k,
                 sample_data.iter().map(|sd| sd.total_variants).sum::<usize>(),
                 sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>()
             ));
         }
-    }
+
 
     pb.finish_with_message("Processing complete");
 
