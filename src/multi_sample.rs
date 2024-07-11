@@ -4,7 +4,6 @@ use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
 use flate2::Decompress;
-use flate2::Status;
 
 const BGZF_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08, 0x04];
 const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08];
@@ -47,12 +46,8 @@ enum FileFormat {
     Uncompressed,
 }
 
-
-
 struct BGZFBlock {
-    compressed_data: Vec<u8>,
     uncompressed_data: Vec<u8>,
-    uncompressed_size: usize,
 }
 
 struct BGZFReader<R: Read + Seek> {
@@ -86,28 +81,15 @@ impl<R: Read + Seek> BGZFReader<R> {
 
         let mut decompressor = Decompress::new(true);
         let mut uncompressed_data = Vec::with_capacity(65536);
-        let mut decompress_result = decompressor.decompress_vec(
+        
+        decompressor.decompress_vec(
             &compressed_data,
             &mut uncompressed_data,
             flate2::FlushDecompress::Finish,
         )?;
 
-        while decompress_result.status == Status::Ok {
-            decompress_result = decompressor.decompress_vec(
-                &[],
-                &mut uncompressed_data,
-                flate2::FlushDecompress::Finish,
-            )?;
-        }
-
-        if decompress_result.status != Status::StreamEnd {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Incomplete BGZF block"));
-        }
-
         self.current_block = Some(BGZFBlock {
-            compressed_data,
-            uncompressed_data: uncompressed_data.clone(),
-            uncompressed_size: uncompressed_data.len(),
+            uncompressed_data,
         });
         self.buffer_pos = 0;
 
@@ -120,14 +102,14 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
         let mut total_read = 0;
 
         while total_read < buf.len() {
-            if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().uncompressed_size {
+            if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().uncompressed_data.len() {
                 if !self.read_block()? {
                     break;
                 }
             }
 
             let block = self.current_block.as_ref().unwrap();
-            let remaining = block.uncompressed_size - self.buffer_pos;
+            let remaining = block.uncompressed_data.len() - self.buffer_pos;
             let to_read = std::cmp::min(remaining, buf.len() - total_read);
 
             buf[total_read..total_read + to_read].copy_from_slice(&block.uncompressed_data[self.buffer_pos..self.buffer_pos + to_read]);
@@ -138,8 +120,6 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
         Ok(total_read)
     }
 }
-
-
 
 struct VcfReader<R: Read> {
     reader: BufReader<R>,
@@ -190,7 +170,6 @@ fn detect_file_format<R: Read + Seek>(mut reader: R) -> io::Result<FileFormat> {
     }
 }
 
-
 fn open_vcf_reader(path: &str) -> Result<Box<dyn Read>, VcfError> {
     let file = File::open(path)?;
     let format = detect_file_format(&file)?;
@@ -201,7 +180,6 @@ fn open_vcf_reader(path: &str) -> Result<Box<dyn Read>, VcfError> {
         FileFormat::Uncompressed => Ok(Box::new(file)),
     }
 }
-
 
 pub fn calculate_polygenic_score_multi(
     path: &str,
@@ -228,7 +206,6 @@ pub fn calculate_polygenic_score_multi(
     let mut total_score = 0.0;
     let mut total_variants = 0;
     let mut total_matched = 0;
-    let mut lines_processed = 0;
     let mut in_data_section = false;
 
     if debug {
@@ -239,8 +216,6 @@ pub fn calculate_polygenic_score_multi(
         if debug {
             println!("Line read: {}", line);
         }
-
-        lines_processed += 1;
 
         if line.starts_with("#CHROM") {
             in_data_section = true;
