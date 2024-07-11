@@ -3,6 +3,8 @@ use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
+use flate2::Decompress;
+use flate2::Status;
 
 const BGZF_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08, 0x04];
 const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08];
@@ -45,16 +47,17 @@ enum FileFormat {
     Uncompressed,
 }
 
+
+
 struct BGZFBlock {
-    compressed_size: usize,
+    compressed_data: Vec<u8>,
+    uncompressed_data: Vec<u8>,
     uncompressed_size: usize,
-    data: Vec<u8>,
 }
 
 struct BGZFReader<R: Read + Seek> {
     inner: R,
     current_block: Option<BGZFBlock>,
-    buffer: Vec<u8>,
     buffer_pos: usize,
 }
 
@@ -63,7 +66,6 @@ impl<R: Read + Seek> BGZFReader<R> {
         BGZFReader {
             inner,
             current_block: None,
-            buffer: Vec::new(),
             buffer_pos: 0,
         }
     }
@@ -78,18 +80,34 @@ impl<R: Read + Seek> BGZFReader<R> {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid BGZF block"));
         }
 
-        let compressed_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
-        let mut block_data = vec![0u8; compressed_size - 18];
-        self.inner.read_exact(&mut block_data)?;
+        let block_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
+        let mut compressed_data = vec![0u8; block_size - 18];
+        self.inner.read_exact(&mut compressed_data)?;
 
-        let mut decoder = flate2::read::GzDecoder::new(&block_data[..]);
-        let mut uncompressed_data = Vec::new();
-        decoder.read_to_end(&mut uncompressed_data)?;
+        let mut decompressor = Decompress::new(true);
+        let mut uncompressed_data = Vec::with_capacity(65536);
+        let mut decompress_result = decompressor.decompress_vec(
+            &compressed_data,
+            &mut uncompressed_data,
+            flate2::FlushDecompress::Finish,
+        )?;
+
+        while decompress_result.status == Status::Ok {
+            decompress_result = decompressor.decompress_vec(
+                &[],
+                &mut uncompressed_data,
+                flate2::FlushDecompress::Finish,
+            )?;
+        }
+
+        if decompress_result.status != Status::StreamEnd {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Incomplete BGZF block"));
+        }
 
         self.current_block = Some(BGZFBlock {
-            compressed_size,
+            compressed_data,
+            uncompressed_data: uncompressed_data.clone(),
             uncompressed_size: uncompressed_data.len(),
-            data: uncompressed_data,
         });
         self.buffer_pos = 0;
 
@@ -102,17 +120,17 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
         let mut total_read = 0;
 
         while total_read < buf.len() {
-            if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().data.len() {
+            if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().uncompressed_size {
                 if !self.read_block()? {
                     break;
                 }
             }
 
             let block = self.current_block.as_ref().unwrap();
-            let remaining = block.data.len() - self.buffer_pos;
+            let remaining = block.uncompressed_size - self.buffer_pos;
             let to_read = std::cmp::min(remaining, buf.len() - total_read);
 
-            buf[total_read..total_read + to_read].copy_from_slice(&block.data[self.buffer_pos..self.buffer_pos + to_read]);
+            buf[total_read..total_read + to_read].copy_from_slice(&block.uncompressed_data[self.buffer_pos..self.buffer_pos + to_read]);
             self.buffer_pos += to_read;
             total_read += to_read;
         }
@@ -120,6 +138,8 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
         Ok(total_read)
     }
 }
+
+
 
 struct VcfReader<R: Read> {
     reader: BufReader<R>,
@@ -170,6 +190,7 @@ fn detect_file_format<R: Read + Seek>(mut reader: R) -> io::Result<FileFormat> {
     }
 }
 
+
 fn open_vcf_reader(path: &str) -> Result<Box<dyn Read>, VcfError> {
     let file = File::open(path)?;
     let format = detect_file_format(&file)?;
@@ -180,6 +201,7 @@ fn open_vcf_reader(path: &str) -> Result<Box<dyn Read>, VcfError> {
         FileFormat::Uncompressed => Ok(Box::new(file)),
     }
 }
+
 
 pub fn calculate_polygenic_score_multi(
     path: &str,
