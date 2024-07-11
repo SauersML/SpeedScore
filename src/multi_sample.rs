@@ -1,12 +1,9 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, Read, BufRead, BufReader};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, BufRead, BufReader, Write};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-
-
-
+use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -41,14 +38,14 @@ impl From<std::string::FromUtf8Error> for VcfError {
 
 struct VcfReader<R: Read> {
     reader: BufReader<R>,
-    sample_count: usize,
+    sample_names: Vec<String>,
 }
 
 impl<R: Read> VcfReader<R> {
     fn new(reader: R) -> Result<Self, VcfError> {
         let mut vcf_reader = VcfReader {
             reader: BufReader::new(reader),
-            sample_count: 0,
+            sample_names: Vec::new(),
         };
         vcf_reader.find_header()?;
         Ok(vcf_reader)
@@ -61,7 +58,7 @@ impl<R: Read> VcfReader<R> {
                 return Err(VcfError::InvalidFormat("VCF header not found".to_string()));
             }
             if line.starts_with("#CHROM") {
-                self.sample_count = line.split_whitespace().count() - 9;
+                self.sample_names = line.split_whitespace().skip(9).map(String::from).collect();
                 return Ok(());
             }
             line.clear();
@@ -74,33 +71,36 @@ impl<R: Read> VcfReader<R> {
     }
 }
 
+#[derive(Default)]
+struct SampleData {
+    score: f64,
+    matched_variants: usize,
+    total_variants: usize,
+}
+
 fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfError> {
     let file = File::open(path)?;
     let decoder = MultiGzDecoder::new(file);
     VcfReader::new(decoder)
 }
 
-
-
-
-
 pub fn calculate_polygenic_score_multi(
-    path: &str,
+    vcf_path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
+    output_path: &str,
     debug: bool
-) -> Result<(f64, usize, usize), VcfError> {
+) -> Result<(), VcfError> {
     let start_time = Instant::now();
 
-    println!("Opening file: {}", path);
+    println!("Opening file: {}", vcf_path);
     println!("Effect weights loaded: {} variants", effect_weights.len());
 
-    let mut vcf_reader = open_vcf_reader(path)?;
+    let mut vcf_reader = open_vcf_reader(vcf_path)?;
 
     println!("VCF data start found.");
-    println!("Sample count: {}", vcf_reader.sample_count);
+    println!("Sample count: {}", vcf_reader.sample_names.len());
     println!("Processing variants...");
 
-    // Set up progress bar
     let pb = ProgressBar::new_spinner();
     pb.set_style(ProgressStyle::default_spinner()
         .template("{spinner:.green} [{elapsed_precise}] {msg}")
@@ -108,47 +108,28 @@ pub fn calculate_polygenic_score_multi(
     pb.set_message("Starting processing...");
 
     let mut line = String::new();
-    let mut total_score = 0.0;
-    let mut total_variants = 0;
-    let mut total_matched = 0;
+    let mut sample_data: Vec<SampleData> = vec![SampleData::default(); vcf_reader.sample_names.len()];
     let mut in_data_section = false;
     let mut lines_processed = 0;
-    let mut last_sample_update = 0;
-    let sample_update_interval = 100_000; // Adjust this value as needed
 
     while vcf_reader.read_line(&mut line)? > 0 {
         lines_processed += 1;
 
         if line.starts_with("#CHROM") {
             in_data_section = true;
-            pb.set_message("Found #CHROM line, processing data...");
             continue;
         }
 
         if in_data_section {
-            let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
-            total_score += score;
-            total_variants += variants;
-            total_matched += matched;
+            process_line(&line, effect_weights, &mut sample_data, debug);
 
             if lines_processed % 1_000 == 0 {
-                let estimated_samples = (lines_processed / sample_update_interval).min(vcf_reader.sample_count);
                 pb.set_message(format!(
-                    "Lines: {}, Variants: {}, Matched: {}, Est. Samples: {}/{}",
-                    lines_processed, total_variants, total_matched, estimated_samples, vcf_reader.sample_count
+                    "{:.4}K lines, {} variants, {} matched",
+                    lines_processed as f64 / 1000.0,
+                    sample_data.iter().map(|sd| sd.total_variants).sum::<usize>(),
+                    sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>()
                 ));
-            }
-
-            if lines_processed - last_sample_update >= sample_update_interval {
-                last_sample_update = lines_processed;
-                let estimated_samples = (lines_processed / sample_update_interval).min(vcf_reader.sample_count);
-                let avg_score_per_sample = total_score / vcf_reader.sample_count as f64;
-                println!("\nDetailed progress update:");
-                println!("Estimated samples processed: {}/{}", estimated_samples, vcf_reader.sample_count);
-                println!("Lines processed: {}", lines_processed);
-                println!("Variants processed: {}", total_variants);
-                println!("Matched variants: {}", total_matched);
-                println!("Current average score per sample: {:.6}", avg_score_per_sample);
             }
         }
     }
@@ -157,78 +138,69 @@ pub fn calculate_polygenic_score_multi(
 
     let duration = start_time.elapsed();
 
-    println!("\nFinished reading all lines.");
-    println!("Total lines processed: {}", lines_processed);
-    println!("Total variants processed: {}", total_variants);
-    println!("Matched variants: {}", total_matched);
-    println!("Final average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
+    write_csv_output(output_path, vcf_path, &vcf_reader.sample_names, &sample_data, duration)?;
+
+    println!("\nFinished processing.");
+    println!("Total lines processed: {:.4}K", lines_processed as f64 / 1000.0);
+    println!("Results written to: {}", output_path);
     println!("Processing time: {:?}", duration);
 
-    if total_variants == 0 {
-        println!("Warning: No variants were processed!");
-    }
-
-    Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
+    Ok(())
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_count: usize, debug: bool) -> (f64, usize, usize) {
+fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) {
     let mut parts = line.split('\t');
     let chr = parts.next().and_then(|s| s.parse::<u8>().ok());
     let pos = parts.next().and_then(|s| s.parse::<u32>().ok());
 
-    if debug {
-        println!("Parsed chr: {:?}, pos: {:?}", chr, pos);
-    }
-
     if let (Some(chr), Some(pos)) = (chr, pos) {
         if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+            let genotypes = parts.skip(7);
+            for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
+                sample.total_variants += 1;
+                match genotype.chars().next() {
+                    Some('0') => sample.matched_variants += 1,
+                    Some('1') => {
+                        sample.score += f64::from(weight);
+                        sample.matched_variants += 1;
+                    }
+                    _ => {}
+                }
+            }
             if debug {
-                println!("Found matching weight for chr: {}, pos: {}", chr, pos);
+                println!("Processed variant at Chr {}, Pos {}", chr, pos);
             }
-            let genotypes: Vec<&str> = parts.skip(7).take(sample_count).collect();
-            if debug {
-                println!("Genotypes: {:?}", genotypes.iter().take(5).collect::<Vec<_>>());
-            }
-            let (score, matched) = genotypes.iter()
-                .map(|&gt| match gt.chars().next() {
-                    Some('0') => (0.0, 1),
-                    Some('1') => (f64::from(weight), 1),
-                    _ => (0.0, 0),
-                })
-                .fold((0.0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1));
-            
-            if debug && matched > 0 {
-                println!("Matched variant at Chr {}, Pos {}. Score: {}, Matched: {}", chr, pos, score, matched);
-            }
-            
-            return (score, 1, matched);
-        } else {
-            if debug {
-                println!("No matching weight for chr: {}, pos: {}", chr, pos);
-            }
-        }
-    } else {
-        if debug {
-            println!("Could not parse chr or pos from line: {}", line);
         }
     }
-    
-    (0.0, 1, 0)
+}
+
+fn write_csv_output(
+    output_path: &str,
+    vcf_path: &str,
+    sample_names: &[String],
+    sample_data: &[SampleData],
+    duration: std::time::Duration
+) -> Result<(), VcfError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output_path)?;
+
+    writeln!(file, "VCF_File,Sample_Name,Polygenic_Score,Calculation_Time_Seconds,Total_Variants,Matched_Variants")?;
+
+    for (name, data) in sample_names.iter().zip(sample_data.iter()) {
+        writeln!(
+            file,
+            "{},{},{:.6},{:.6},{},{}",
+            vcf_path,
+            name,
+            data.score,
+            duration.as_secs_f64(),
+            data.total_variants,
+            data.matched_variants
+        )?;
+    }
+
+    Ok(())
 }
