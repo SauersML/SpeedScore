@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader};
 use std::time::Instant;
-use flate2::read::GzDecoder;
-
+use flate2::read::{MultiGzDecoder, GzDecoder};
+use rust_htslib::bgzf;
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -55,10 +55,17 @@ impl LineReader for BufReader<File> {
     }
 }
 
-impl LineReader for BufReader<GzDecoder<File>> {
+impl LineReader for BufReader<MultiGzDecoder<File>> {
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
         buf.clear();
         Ok(io::BufRead::read_line(self, buf)?)
+    }
+}
+
+impl LineReader for bgzf::Reader {
+    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
+        buf.clear();
+        Ok(self.read_line(buf)?)
     }
 }
 
@@ -71,7 +78,14 @@ impl VcfReader {
     fn new(path: &str) -> Result<Self, VcfError> {
         let file = File::open(path)?;
         let reader: Box<dyn LineReader> = if path.ends_with(".gz") {
-            Box::new(BufReader::new(GzDecoder::new(file)))
+            // Try to open as bgzip first
+            match bgzf::Reader::from_path(path) {
+                Ok(bgzf_reader) => Box::new(bgzf_reader),
+                Err(_) => {
+                    // If bgzip fails, try regular gzip
+                    Box::new(BufReader::new(MultiGzDecoder::new(file)))
+                }
+            }
         } else {
             Box::new(BufReader::new(file))
         };
@@ -94,7 +108,6 @@ impl VcfReader {
         }
     }
 }
-
 
 pub fn calculate_polygenic_score_multi(
     path: &str,
