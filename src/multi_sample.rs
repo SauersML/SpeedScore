@@ -217,27 +217,39 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_
     Some((last_chr, last_pos))
 }
 
-fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> (u8, u32) {
-    let mut parts = line.split('\t');
-    let chr = parts.next().and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
-    let pos = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(u8, u32)> {
+    let mut last_chr = 0;
+    let mut last_pos = 0;
 
-    if let Some(&weight) = effect_weights.get(&(chr, pos)) {
-        let genotypes = parts.skip(7);
-        for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
-            sample.total_variants += 1;
-            match genotype.chars().next() {
-                Some('0') => sample.matched_variants += 1,
-                Some('1') => {
-                    sample.score += f64::from(weight);
-                    sample.matched_variants += 1;
+    for line in chunk.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut parts = line.split(|&b| b == b'\t');
+        let chr = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u8>().ok()).unwrap_or(0);
+        let pos = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u32>().ok()).unwrap_or(0);
+
+        if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+            let genotypes = parts.skip(7);
+            for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
+                sample.total_variants += 1;
+                match genotype.first() {
+                    Some(b'0') => sample.matched_variants += 1,
+                    Some(b'1') => {
+                        sample.score += f64::from(weight);
+                        sample.matched_variants += 1;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
+
+        last_chr = chr;
+        last_pos = pos;
     }
 
-    (chr, pos)
+    Some((last_chr, last_pos))
 }
 
 fn write_csv_output(
