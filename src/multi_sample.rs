@@ -76,6 +76,8 @@ fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfErr
     VcfReader::new(decoder)
 }
 
+
+
 pub fn calculate_polygenic_score_multi(
     path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -101,16 +103,13 @@ pub fn calculate_polygenic_score_multi(
     let mut total_variants = 0;
     let mut total_matched = 0;
     let mut in_data_section = false;
+    let mut lines_processed = 0;
 
     if debug {
         println!("Starting to read lines...");
     }
 
     while vcf_reader.read_line(&mut line)? > 0 {
-        if debug {
-            println!("Line read: {}", line);
-        }
-
         if line.starts_with("#CHROM") {
             in_data_section = true;
             if debug {
@@ -120,9 +119,13 @@ pub fn calculate_polygenic_score_multi(
         }
 
         if in_data_section {
-            if debug {
-                println!("Processing variant line: {}", line);
+            lines_processed += 1;
+
+            if debug && lines_processed <= 1000 && lines_processed % 100 == 0 {
+                let truncated_line: String = line.split('\t').take(14).collect::<Vec<_>>().join("\t");
+                println!("Line {}: {}", lines_processed, truncated_line);
             }
+
             let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
             total_score += score;
             total_variants += variants;
@@ -148,6 +151,9 @@ pub fn calculate_polygenic_score_multi(
 
     Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
 }
+
+
+
 
 fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_count: usize, debug: bool) -> (f64, usize, usize) {
     let mut parts = line.split('\t');
