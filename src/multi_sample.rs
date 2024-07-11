@@ -91,6 +91,9 @@ fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfErr
 
 
 
+
+
+
 pub fn calculate_polygenic_score_multi(
     path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -189,8 +192,6 @@ pub fn calculate_polygenic_score_multi(
 
     Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
 }
-
-
 
 
 
