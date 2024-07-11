@@ -96,56 +96,36 @@ impl VcfReader {
 }
 
 
+use std::fs::File;
+use std::io::{Read, BufReader};
+use flate2::read::GzDecoder;
 
 fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
-    let mut reader = GzDecoder::new(file);
-    let mut buffer = Vec::new();
-    let mut line = Vec::new();
-    let mut line_count = 0;
-    let mut total_bytes_processed = 0;
+    let mut reader = BufReader::new(GzDecoder::new(file));
+    let mut buffer = [0; 4096]; // Read in 4KB chunks
+    let mut total_bytes = 0;
 
     loop {
-        buffer.clear();
-        match reader.read_to_end(&mut buffer) {
+        match reader.read(&mut buffer) {
             Ok(0) => break, // End of file
-            Ok(_) => {
-                for (i, &byte) in buffer.iter().enumerate() {
-                    if byte == b'\n' {
-                        // We've reached the end of a line
-                        let before_start = if i >= 100 { i - 100 } else { 0 };
-                        let after_end = std::cmp::min(i + 101, buffer.len());
-                        
-                        let before: String = buffer[before_start..i].iter()
-                            .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
-                            .collect();
-                        let after: String = buffer[i+1..after_end].iter()
-                            .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
-                            .collect();
-                        
-                        println!("Newline at position {}:", i);
-                        println!("Before: {}", before);
-                        println!("After:  {}", after);
-                        println!("---");
-
-                        let line_str = String::from_utf8_lossy(&line);
-                        let columns: Vec<&str> = line_str.split('\t').take(14).collect();
-                        println!("Line {}: {:?}", line_count, columns);
-                        line.clear();
-                        line_count += 1;
-                    } else {
-                        line.push(byte);
-                    }
-
-                    total_bytes_processed += 1;
-                    if total_bytes_processed >= 10_000 {
-                        return Ok(());
+            Ok(bytes_read) => {
+                for &byte in &buffer[..bytes_read] {
+                    print!("{:02X} ", byte);
+                    total_bytes += 1;
+                    if total_bytes % 16 == 0 {
+                        println!();
                     }
                 }
             }
             Err(e) => return Err(VcfError::Io(e)),
         }
     }
+
+    if total_bytes % 16 != 0 {
+        println!();
+    }
+    println!("Total bytes read: {}", total_bytes);
 
     Ok(())
 }
