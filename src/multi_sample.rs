@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
-use flate2::Decompress;
+use libdeflate::Decompressor;
 
 const BGZF_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08, 0x04];
 const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08];
@@ -13,6 +13,7 @@ pub enum VcfError {
     Io(io::Error),
     InvalidFormat(String),
     Utf8Error(std::string::FromUtf8Error),
+    DecompressionError,
 }
 
 impl std::fmt::Display for VcfError {
@@ -21,6 +22,7 @@ impl std::fmt::Display for VcfError {
             VcfError::Io(err) => write!(f, "I/O error: {}", err),
             VcfError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
             VcfError::Utf8Error(err) => write!(f, "UTF-8 error: {}", err),
+            VcfError::DecompressionError => write!(f, "Decompression error"),
         }
     }
 }
@@ -52,6 +54,7 @@ struct BGZFBlock {
 
 struct BGZFReader<R: Read + Seek> {
     inner: R,
+    decompressor: Decompressor,
     current_block: Option<BGZFBlock>,
     buffer_pos: usize,
 }
@@ -60,33 +63,31 @@ impl<R: Read + Seek> BGZFReader<R> {
     fn new(inner: R) -> Self {
         BGZFReader {
             inner,
+            decompressor: Decompressor::new(),
             current_block: None,
             buffer_pos: 0,
         }
     }
 
-    fn read_block(&mut self) -> io::Result<bool> {
+    fn read_block(&mut self) -> Result<bool, VcfError> {
         let mut header = [0u8; 18];
         if self.inner.read_exact(&mut header).is_err() {
             return Ok(false);
         }
 
         if &header[0..4] != BGZF_MAGIC {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid BGZF block"));
+            return Err(VcfError::InvalidFormat("Invalid BGZF block".to_string()));
         }
 
         let block_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
         let mut compressed_data = vec![0u8; block_size - 18];
         self.inner.read_exact(&mut compressed_data)?;
 
-        let mut decompressor = Decompress::new(true);
-        let mut uncompressed_data = Vec::with_capacity(65536);
-        
-        decompressor.decompress_vec(
-            &compressed_data,
-            &mut uncompressed_data,
-            flate2::FlushDecompress::Finish,
-        )?;
+        let mut uncompressed_data = vec![0u8; 65536]; // BGZF blocks are always <= 65536 bytes when uncompressed
+        let uncompressed_size = self.decompressor.gzip_decompress(&compressed_data, &mut uncompressed_data)
+            .map_err(|_| VcfError::DecompressionError)?;
+
+        uncompressed_data.truncate(uncompressed_size);
 
         self.current_block = Some(BGZFBlock {
             uncompressed_data,
@@ -103,8 +104,10 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
 
         while total_read < buf.len() {
             if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().uncompressed_data.len() {
-                if !self.read_block()? {
-                    break;
+                match self.read_block() {
+                    Ok(true) => {},
+                    Ok(false) => break,
+                    Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
                 }
             }
 
@@ -120,6 +123,7 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
         Ok(total_read)
     }
 }
+
 
 struct VcfReader<R: Read> {
     reader: BufReader<R>,
