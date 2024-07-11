@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, BufRead, BufReader};
+use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
 use std::time::Instant;
-use flate2::read::{MultiGzDecoder, GzDecoder};
-use rust-htslib::bgzf;
+use flate2::read::MultiGzDecoder;
+
+const BGZF_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08, 0x04];
+const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08];
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -16,21 +18,13 @@ impl std::fmt::Display for VcfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VcfError::Io(err) => write!(f, "I/O error: {}", err),
-            VcfError::InvalidFormat(msg) => write!(f, "Invalid VCF format: {}", msg),
+            VcfError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
             VcfError::Utf8Error(err) => write!(f, "UTF-8 error: {}", err),
         }
     }
 }
 
-impl std::error::Error for VcfError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            VcfError::Io(err) => Some(err),
-            VcfError::InvalidFormat(_) => None,
-            VcfError::Utf8Error(err) => Some(err),
-        }
-    }
-}
+impl std::error::Error for VcfError {}
 
 impl From<io::Error> for VcfError {
     fn from(error: io::Error) -> Self {
@@ -44,53 +38,100 @@ impl From<std::string::FromUtf8Error> for VcfError {
     }
 }
 
-trait LineReader {
-    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError>;
+#[derive(Debug, PartialEq)]
+enum FileFormat {
+    Gzip,
+    Bgzip,
+    Uncompressed,
 }
 
-impl LineReader for BufReader<File> {
-    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
-        buf.clear();
-        Ok(io::BufRead::read_line(self, buf)?)
+struct BGZFBlock {
+    compressed_size: usize,
+    uncompressed_size: usize,
+    data: Vec<u8>,
+}
+
+struct BGZFReader<R: Read + Seek> {
+    inner: R,
+    current_block: Option<BGZFBlock>,
+    buffer: Vec<u8>,
+    buffer_pos: usize,
+}
+
+impl<R: Read + Seek> BGZFReader<R> {
+    fn new(inner: R) -> Self {
+        BGZFReader {
+            inner,
+            current_block: None,
+            buffer: Vec::new(),
+            buffer_pos: 0,
+        }
+    }
+
+    fn read_block(&mut self) -> io::Result<bool> {
+        let mut header = [0u8; 18];
+        if self.inner.read_exact(&mut header).is_err() {
+            return Ok(false);
+        }
+
+        if &header[0..4] != BGZF_MAGIC {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid BGZF block"));
+        }
+
+        let compressed_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
+        let mut block_data = vec![0u8; compressed_size - 18];
+        self.inner.read_exact(&mut block_data)?;
+
+        let mut decoder = flate2::read::GzDecoder::new(&block_data[..]);
+        let mut uncompressed_data = Vec::new();
+        decoder.read_to_end(&mut uncompressed_data)?;
+
+        self.current_block = Some(BGZFBlock {
+            compressed_size,
+            uncompressed_size: uncompressed_data.len(),
+            data: uncompressed_data,
+        });
+        self.buffer_pos = 0;
+
+        Ok(true)
     }
 }
 
-impl LineReader for BufReader<MultiGzDecoder<File>> {
-    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
-        buf.clear();
-        Ok(io::BufRead::read_line(self, buf)?)
+impl<R: Read + Seek> Read for BGZFReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut total_read = 0;
+
+        while total_read < buf.len() {
+            if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().data.len() {
+                if !self.read_block()? {
+                    break;
+                }
+            }
+
+            let block = self.current_block.as_ref().unwrap();
+            let remaining = block.data.len() - self.buffer_pos;
+            let to_read = std::cmp::min(remaining, buf.len() - total_read);
+
+            buf[total_read..total_read + to_read].copy_from_slice(&block.data[self.buffer_pos..self.buffer_pos + to_read]);
+            self.buffer_pos += to_read;
+            total_read += to_read;
+        }
+
+        Ok(total_read)
     }
 }
 
-impl LineReader for bgzf::Reader {
-    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
-        buf.clear();
-        Ok(self.read_line(buf)?)
-    }
-}
-
-struct VcfReader {
-    reader: Box<dyn LineReader>,
+struct VcfReader<R: Read> {
+    reader: BufReader<R>,
     sample_count: usize,
 }
 
-impl VcfReader {
-    fn new(path: &str) -> Result<Self, VcfError> {
-        let file = File::open(path)?;
-        let reader: Box<dyn LineReader> = if path.ends_with(".gz") {
-            // Try to open as bgzip first
-            match bgzf::Reader::from_path(path) {
-                Ok(bgzf_reader) => Box::new(bgzf_reader),
-                Err(_) => {
-                    // If bgzip fails, try regular gzip
-                    Box::new(BufReader::new(MultiGzDecoder::new(file)))
-                }
-            }
-        } else {
-            Box::new(BufReader::new(file))
+impl<R: Read> VcfReader<R> {
+    fn new(reader: R) -> Result<Self, VcfError> {
+        let mut vcf_reader = VcfReader {
+            reader: BufReader::new(reader),
+            sample_count: 0,
         };
-
-        let mut vcf_reader = VcfReader { reader, sample_count: 0 };
         vcf_reader.find_header()?;
         Ok(vcf_reader)
     }
@@ -105,7 +146,38 @@ impl VcfReader {
             } else if !line.starts_with('#') {
                 return Err(VcfError::InvalidFormat("VCF header not found".to_string()));
             }
+            line.clear();
         }
+    }
+
+    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
+        buf.clear();
+        Ok(self.reader.read_line(buf)?)
+    }
+}
+
+fn detect_file_format<R: Read + Seek>(mut reader: R) -> io::Result<FileFormat> {
+    let mut magic = [0u8; 4];
+    reader.read_exact(&mut magic)?;
+    reader.seek(SeekFrom::Start(0))?;
+
+    if magic.starts_with(BGZF_MAGIC) {
+        Ok(FileFormat::Bgzip)
+    } else if magic.starts_with(GZIP_MAGIC) {
+        Ok(FileFormat::Gzip)
+    } else {
+        Ok(FileFormat::Uncompressed)
+    }
+}
+
+fn open_vcf_reader(path: &str) -> Result<Box<dyn Read>, VcfError> {
+    let file = File::open(path)?;
+    let format = detect_file_format(&file)?;
+
+    match format {
+        FileFormat::Bgzip => Ok(Box::new(BGZFReader::new(file))),
+        FileFormat::Gzip => Ok(Box::new(MultiGzDecoder::new(file))),
+        FileFormat::Uncompressed => Ok(Box::new(file)),
     }
 }
 
@@ -121,7 +193,8 @@ pub fn calculate_polygenic_score_multi(
         println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
     }
 
-    let mut vcf_reader = VcfReader::new(path)?;
+    let reader = open_vcf_reader(path)?;
+    let mut vcf_reader = VcfReader::new(reader)?;
 
     if debug {
         println!("VCF data start found.");
@@ -140,7 +213,7 @@ pub fn calculate_polygenic_score_multi(
         println!("Starting to read lines...");
     }
 
-    while vcf_reader.reader.read_line(&mut line)? > 0 {
+    while vcf_reader.read_line(&mut line)? > 0 {
         if debug {
             println!("Line read: {}", line);
         }
