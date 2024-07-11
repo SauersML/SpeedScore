@@ -95,11 +95,6 @@ impl VcfReader {
     }
 }
 
-
-use std::fs::File;
-use std::io::{Read, BufReader};
-use flate2::read::GzDecoder;
-
 fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(GzDecoder::new(file));
