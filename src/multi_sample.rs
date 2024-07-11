@@ -53,17 +53,14 @@ impl<R: Read> VcfReader<R> {
     }
 
     fn find_header(&mut self) -> Result<(), VcfError> {
-        let mut line = String::new();
-        loop {
-            if self.reader.read_line(&mut line)? == 0 {
-                return Err(VcfError::InvalidFormat("VCF header not found".to_string()));
-            }
+        for line in self.reader.by_ref().lines() {
+            let line = line?;
             if line.starts_with("#CHROM") {
                 self.sample_names = line.split_whitespace().skip(9).map(String::from).collect();
                 return Ok(());
             }
-            line.clear();
         }
+        Err(VcfError::InvalidFormat("VCF header not found".to_string()))
     }
 
     fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
@@ -80,7 +77,7 @@ struct SampleData {
 }
 
 fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfError> {
-    let file = File::open(path).map_err(|e| VcfError::Io(e))?;
+    let file = File::open(path).map_err(VcfError::Io)?;
     let decoder = MultiGzDecoder::new(file);
     VcfReader::new(decoder)
 }
@@ -102,37 +99,33 @@ pub fn calculate_polygenic_score_multi(
     println!("Sample count: {}", vcf_reader.sample_names.len());
     println!("Processing variants...");
 
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::default_spinner()
-        .template("{spinner:.green} [{elapsed_precise}] {msg}")
-        .unwrap());
-    pb.set_message("Starting processing...");
+    let pb = ProgressBar::new(0);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} lines ({per_sec}) {msg}")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("Processing...");
 
     let mut line = String::new();
     let mut sample_data: Vec<SampleData> = vec![SampleData::default(); vcf_reader.sample_names.len()];
-    let mut in_data_section = false;
     let mut lines_processed = 0;
 
     while vcf_reader.read_line(&mut line)? > 0 {
         lines_processed += 1;
+        pb.set_position(lines_processed);
 
-        if line.starts_with("#CHROM") {
-            in_data_section = true;
-            continue;
+        if !line.starts_with('#') {
+            process_line(&line, effect_weights, &mut sample_data, debug);
         }
 
-        if in_data_section {
-            process_line(&line, effect_weights, &mut sample_data, debug);
-
-            if lines_processed % 1_000 == 0 {
-                let lines_in_k = lines_processed as f64 / 1000.0;
-                pb.set_message(format!(
-                    "{:.4}K lines, {} variants, {} matched",
-                    lines_in_k,
-                    sample_data.iter().map(|sd| sd.total_variants).sum::<usize>(),
-                    sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>()
-                ));
-            }
+        if lines_processed % 100 == 0 {
+            let lines_in_k = lines_processed as f64 / 1000.0;
+            pb.set_message(format!(
+                "{:.4}K lines, {} variants, {} matched",
+                lines_in_k,
+                sample_data.iter().map(|sd| sd.total_variants).sum::<usize>(),
+                sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>()
+            ));
         }
     }
 
