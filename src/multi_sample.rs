@@ -151,7 +151,7 @@ pub fn calculate_polygenic_score_multi(
             }
         }
 
-        if lines_processed % 1_000 == 0 {
+        if lines_processed % 100_000 == 0 {
             let lines_in_k = lines_processed / 1000;
             let variants = sample_data.iter().map(|sd| sd.total_variants).sum::<usize>();
             let matched = sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>();
