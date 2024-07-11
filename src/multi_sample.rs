@@ -95,37 +95,6 @@ impl VcfReader {
     }
 }
 
-fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(GzDecoder::new(file));
-    let mut buffer = [0; 4096]; // Read in 4KB chunks
-    let mut total_bytes = 0;
-
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break, // End of file
-            Ok(bytes_read) => {
-                for &byte in &buffer[..bytes_read] {
-                    print!("{:02X} ", byte);
-                    total_bytes += 1;
-                    if total_bytes % 16 == 0 {
-                        println!();
-                    }
-                }
-            }
-            Err(e) => return Err(VcfError::Io(e)),
-        }
-    }
-
-    if total_bytes % 16 != 0 {
-        println!();
-    }
-    println!("Total bytes read: {}", total_bytes);
-
-    Ok(())
-}
-
-
 
 pub fn calculate_polygenic_score_multi(
     path: &str,
@@ -137,9 +106,6 @@ pub fn calculate_polygenic_score_multi(
     if debug {
         println!("Opening file: {}", path);
         println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
-        println!("Debugging: Printing first 14 columns");
-        debug_print_vcf_lines(path)?;
-        println!("Debug print complete. Proceeding with normal processing.");
     }
 
     let mut vcf_reader = VcfReader::new(path)?;
