@@ -3,7 +3,8 @@ use std::fs::File;
 use std::io::{self, Read, BufRead, BufReader};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+
 
 
 
