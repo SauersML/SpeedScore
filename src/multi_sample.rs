@@ -88,6 +88,9 @@ fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfErr
 
 
 
+
+
+
 pub fn calculate_polygenic_score_multi(
     path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -95,15 +98,18 @@ pub fn calculate_polygenic_score_multi(
 ) -> Result<(f64, usize, usize), VcfError> {
     let start_time = Instant::now();
 
-    println!("Opening file: {}", path);
-    println!("Effect weights loaded: {} variants", effect_weights.len().separate_with_commas());
+    if debug {
+        println!("Opening file: {}", path);
+        println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
+    }
 
     let mut vcf_reader = open_vcf_reader(path)?;
 
-    println!("VCF data start found.");
-    println!("Total samples in VCF: {}", vcf_reader.sample_count.separate_with_commas());
-    println!("Processing all {} samples simultaneously...", vcf_reader.sample_count.separate_with_commas());
-    println!("Processing variants...");
+    if debug {
+        println!("VCF data start found.");
+        println!("Sample count: {}", vcf_reader.sample_count);
+        println!("Processing variants...");
+    }
 
     let mut line = String::new();
     let mut total_score = 0.0;
@@ -111,18 +117,24 @@ pub fn calculate_polygenic_score_multi(
     let mut total_matched = 0;
     let mut in_data_section = false;
     let mut lines_processed = 0;
+    let mut current_chr = 0;
+    let mut chr_variants = 0;
+    let total_weights = effect_weights.len();
 
-    // Immediate initial progress output
-    println!("Initial progress:");
-    println!("Lines processed: 0");
-    println!("Variants processed: 0");
-    println!("Matched variants: 0");
-    println!("Current average score per sample: 0.000000");
+    // Determine the maximum chromosome number in the effect weights
+    let max_chr = effect_weights.keys().map(|&(chr, _)| chr).max().unwrap_or(0);
+
+    if debug {
+        println!("Total variants to process: {}", total_weights);
+        println!("Maximum chromosome number: {}", max_chr);
+    }
 
     while vcf_reader.read_line(&mut line)? > 0 {
         if line.starts_with("#CHROM") {
             in_data_section = true;
-            println!("Found #CHROM line, starting to process data...");
+            if debug {
+                println!("Found #CHROM line: {}", line);
+            }
             continue;
         }
 
@@ -131,7 +143,7 @@ pub fn calculate_polygenic_score_multi(
 
             if debug && lines_processed <= 1000 && lines_processed % 100 == 0 {
                 let truncated_line: String = line.split('\t').take(14).collect::<Vec<_>>().join("\t");
-                println!("Line {}: {}", lines_processed.separate_with_commas(), truncated_line);
+                println!("Line {}: {}", lines_processed, truncated_line);
             }
 
             let (score, variants, matched) = process_line(&line, effect_weights, vcf_reader.sample_count, debug);
@@ -139,28 +151,40 @@ pub fn calculate_polygenic_score_multi(
             total_variants += variants;
             total_matched += matched;
 
-            if lines_processed % 10_000 == 0 {
-                let elapsed = start_time.elapsed();
-                println!("Progress: {} lines processed in {:?}", lines_processed.separate_with_commas(), elapsed);
-                println!("Variants processed: {}, matched: {}", total_variants.separate_with_commas(), total_matched.separate_with_commas());
-                println!("Current average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
-                println!("Processing all {} samples", vcf_reader.sample_count.separate_with_commas());
+            // Update progress information
+            if variants > 0 {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if let Ok(chr) = parts[0].parse::<u8>() {
+                    if chr != current_chr {
+                        if current_chr != 0 {
+                            println!("Finished processing chromosome {}. Processed {} variants.", current_chr, chr_variants);
+                        }
+                        current_chr = chr;
+                        chr_variants = 0;
+                    }
+                    chr_variants += 1;
+
+                    if chr_variants % 10000 == 0 || total_variants % 100000 == 0 {
+                        let progress_percentage = (total_matched as f64 / total_weights as f64 * 100.0).min(100.0);
+                        println!("Progress: Processing chromosome {} ({} variants) - Overall: {:.2}% complete ({}/{} variants matched)",
+                                 current_chr, chr_variants, progress_percentage, total_matched, total_weights);
+                    }
+                }
             }
         }
     }
 
     let duration = start_time.elapsed();
 
-    println!("\nFinished reading all lines.");
-    println!("Total lines processed: {}", lines_processed.separate_with_commas());
-    println!("Total variants processed: {}", total_variants.separate_with_commas());
-    println!("Matched variants: {}", total_matched.separate_with_commas());
-    println!("Final average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
-    println!("Processed all {} samples", vcf_reader.sample_count.separate_with_commas());
-    println!("Processing time: {:?}", duration);
-
-    if total_variants == 0 {
-        println!("Warning: No variants were processed!");
+    if debug {
+        println!("Finished processing chromosome {}. Processed {} variants.", current_chr, chr_variants);
+        println!("Finished reading all lines.");
+        println!("Total variants processed: {}", total_variants);
+        println!("Matched variants: {}", total_matched);
+        println!("Processing time: {:?}", duration);
+        if total_variants == 0 {
+            println!("Warning: No variants were processed!");
+        }
     }
 
     Ok((total_score / vcf_reader.sample_count as f64, total_variants, total_matched))
