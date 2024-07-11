@@ -1,19 +1,14 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, BufRead, BufReader, Seek, SeekFrom};
+use std::io::{self, Read, BufRead, BufReader};
 use std::time::Instant;
 use flate2::read::MultiGzDecoder;
-use libdeflate::Decompressor;
-
-const BGZF_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08, 0x04];
-const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b, 0x08];
 
 #[derive(Debug)]
 pub enum VcfError {
     Io(io::Error),
     InvalidFormat(String),
     Utf8Error(std::string::FromUtf8Error),
-    DecompressionError,
 }
 
 impl std::fmt::Display for VcfError {
@@ -22,7 +17,6 @@ impl std::fmt::Display for VcfError {
             VcfError::Io(err) => write!(f, "I/O error: {}", err),
             VcfError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
             VcfError::Utf8Error(err) => write!(f, "UTF-8 error: {}", err),
-            VcfError::DecompressionError => write!(f, "Decompression error"),
         }
     }
 }
@@ -40,90 +34,6 @@ impl From<std::string::FromUtf8Error> for VcfError {
         VcfError::Utf8Error(error)
     }
 }
-
-#[derive(Debug, PartialEq)]
-enum FileFormat {
-    Gzip,
-    Bgzip,
-    Uncompressed,
-}
-
-struct BGZFBlock {
-    uncompressed_data: Vec<u8>,
-}
-
-struct BGZFReader<R: Read + Seek> {
-    inner: R,
-    decompressor: Decompressor,
-    current_block: Option<BGZFBlock>,
-    buffer_pos: usize,
-}
-
-impl<R: Read + Seek> BGZFReader<R> {
-    fn new(inner: R) -> Self {
-        BGZFReader {
-            inner,
-            decompressor: Decompressor::new(),
-            current_block: None,
-            buffer_pos: 0,
-        }
-    }
-
-    fn read_block(&mut self) -> Result<bool, VcfError> {
-        let mut header = [0u8; 18];
-        if self.inner.read_exact(&mut header).is_err() {
-            return Ok(false);
-        }
-
-        if &header[0..4] != BGZF_MAGIC {
-            return Err(VcfError::InvalidFormat("Invalid BGZF block".to_string()));
-        }
-
-        let block_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
-        let mut compressed_data = vec![0u8; block_size - 18];
-        self.inner.read_exact(&mut compressed_data)?;
-
-        let mut uncompressed_data = vec![0u8; 65536]; // BGZF blocks are always <= 65536 bytes when uncompressed
-        let uncompressed_size = self.decompressor.gzip_decompress(&compressed_data, &mut uncompressed_data)
-            .map_err(|_| VcfError::DecompressionError)?;
-
-        uncompressed_data.truncate(uncompressed_size);
-
-        self.current_block = Some(BGZFBlock {
-            uncompressed_data,
-        });
-        self.buffer_pos = 0;
-
-        Ok(true)
-    }
-}
-
-impl<R: Read + Seek> Read for BGZFReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut total_read = 0;
-
-        while total_read < buf.len() {
-            if self.current_block.is_none() || self.buffer_pos >= self.current_block.as_ref().unwrap().uncompressed_data.len() {
-                match self.read_block() {
-                    Ok(true) => {},
-                    Ok(false) => break,
-                    Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
-                }
-            }
-
-            let block = self.current_block.as_ref().unwrap();
-            let remaining = block.uncompressed_data.len() - self.buffer_pos;
-            let to_read = std::cmp::min(remaining, buf.len() - total_read);
-
-            buf[total_read..total_read + to_read].copy_from_slice(&block.uncompressed_data[self.buffer_pos..self.buffer_pos + to_read]);
-            self.buffer_pos += to_read;
-            total_read += to_read;
-        }
-
-        Ok(total_read)
-    }
-}
-
 
 struct VcfReader<R: Read> {
     reader: BufReader<R>,
@@ -143,12 +53,12 @@ impl<R: Read> VcfReader<R> {
     fn find_header(&mut self) -> Result<(), VcfError> {
         let mut line = String::new();
         loop {
-            self.reader.read_line(&mut line)?;
+            if self.reader.read_line(&mut line)? == 0 {
+                return Err(VcfError::InvalidFormat("VCF header not found".to_string()));
+            }
             if line.starts_with("#CHROM") {
                 self.sample_count = line.split_whitespace().count() - 9;
                 return Ok(());
-            } else if !line.starts_with('#') {
-                return Err(VcfError::InvalidFormat("VCF header not found".to_string()));
             }
             line.clear();
         }
@@ -160,29 +70,10 @@ impl<R: Read> VcfReader<R> {
     }
 }
 
-fn detect_file_format<R: Read + Seek>(mut reader: R) -> io::Result<FileFormat> {
-    let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic)?;
-    reader.seek(SeekFrom::Start(0))?;
-
-    if magic.starts_with(BGZF_MAGIC) {
-        Ok(FileFormat::Bgzip)
-    } else if magic.starts_with(GZIP_MAGIC) {
-        Ok(FileFormat::Gzip)
-    } else {
-        Ok(FileFormat::Uncompressed)
-    }
-}
-
-fn open_vcf_reader(path: &str) -> Result<Box<dyn Read>, VcfError> {
+fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfError> {
     let file = File::open(path)?;
-    let format = detect_file_format(&file)?;
-
-    match format {
-        FileFormat::Bgzip => Ok(Box::new(BGZFReader::new(file))),
-        FileFormat::Gzip => Ok(Box::new(MultiGzDecoder::new(file))),
-        FileFormat::Uncompressed => Ok(Box::new(file)),
-    }
+    let decoder = MultiGzDecoder::new(file);
+    VcfReader::new(decoder)
 }
 
 pub fn calculate_polygenic_score_multi(
@@ -197,8 +88,7 @@ pub fn calculate_polygenic_score_multi(
         println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
     }
 
-    let reader = open_vcf_reader(path)?;
-    let mut vcf_reader = VcfReader::new(reader)?;
+    let mut vcf_reader = open_vcf_reader(path)?;
 
     if debug {
         println!("VCF data start found.");
@@ -240,10 +130,6 @@ pub fn calculate_polygenic_score_multi(
 
             if debug && total_variants % 100_000 == 0 {
                 println!("Processed {} variants", total_variants);
-            }
-        } else {
-            if debug {
-                println!("Skipping header/comment line: {}", line);
             }
         }
     }
