@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::time::Instant;
 use flate2::read::GzDecoder;
+
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -94,13 +95,11 @@ impl VcfReader {
     }
 }
 
-
 fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
     let reader = BufReader::new(GzDecoder::new(file));
-    let mut lines = reader.lines();
     
-    for (i, line) in lines.enumerate().take(50_000) {
+    for (i, line) in reader.lines().enumerate().take(50_000) {
         if i % 100 == 0 {
             let line = line?;
             let columns: Vec<&str> = line.split('\t').take(14).collect();
@@ -110,7 +109,6 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     
     Ok(())
 }
-
 
 pub fn calculate_polygenic_score_multi(
     path: &str,
