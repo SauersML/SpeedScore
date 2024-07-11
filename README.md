@@ -83,7 +83,21 @@ When the `--info` flag is used, additional information is displayed in the conso
 - Number of variants in the scoring file
 
 ## Multi-sample VCF
-SpeedScore also supports multi-sample VCFs. For example, it can run a VCF containing the 1000 Genomes dataset. Here is an example of how this might be done:
+SpeedScore also supports multi-sample VCFs. For example, it can run a VCF containing the 1000 Genomes dataset.
+
+A multi-sample VCF will have the following output format:
+
+```
+VCF_File,Sample_Name,Polygenic_Score,Calculation_Time_Seconds,Total_Variants,Matched_Variants
+/path/to/your/file.vcf.gz,HG00096,-0.002532,1164.698128,45693,45693
+/path/to/your/file.vcf.gz,HG00097,0.007797,1164.698128,45693,45693
+/path/to/your/file.vcf.gz,HG00099,-0.009080,1164.698128,45693,45693
+/path/to/your/file.vcf.gz,HG00100,-0.012225,1164.698128,45693,45693
+```
+
+
+
+Here is an example of how this might be done:
 
 ```
 # Clone the repository
