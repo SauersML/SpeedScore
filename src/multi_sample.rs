@@ -137,7 +137,7 @@ pub fn calculate_polygenic_score_multi(
 
         lines_processed += 1;
 
-        if !buffer.starts_with(b'#') {
+        if !buffer.starts_with(&[b'#']) {
             let result = process_chunk(&buffer, effect_weights, &mut sample_data, debug);
             if let Some((chr, pos)) = result {
                 if debug && (chr != last_chr || pos > last_pos + 20_000_000) {
@@ -179,7 +179,6 @@ pub fn calculate_polygenic_score_multi(
 
     Ok((avg_score, total_variants, matched_variants))
 }
-
 
 fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(u8, u32)> {
     let mut last_chr = 0;
