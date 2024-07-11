@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, BufRead, BufReader, Write};
 use std::time::Instant;
+use std::path::Path;
 use flate2::read::MultiGzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -71,7 +72,7 @@ impl<R: Read> VcfReader<R> {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct SampleData {
     score: f64,
     matched_variants: usize,
@@ -79,7 +80,7 @@ struct SampleData {
 }
 
 fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfError> {
-    let file = File::open(path)?;
+    let file = File::open(path).map_err(|e| VcfError::Io(e))?;
     let decoder = MultiGzDecoder::new(file);
     VcfReader::new(decoder)
 }
@@ -89,7 +90,7 @@ pub fn calculate_polygenic_score_multi(
     effect_weights: &HashMap<(u8, u32), f32>,
     output_path: &str,
     debug: bool
-) -> Result<(), VcfError> {
+) -> Result<(f64, usize, usize), VcfError> {
     let start_time = Instant::now();
 
     println!("Opening file: {}", vcf_path);
@@ -124,9 +125,10 @@ pub fn calculate_polygenic_score_multi(
             process_line(&line, effect_weights, &mut sample_data, debug);
 
             if lines_processed % 1_000 == 0 {
+                let lines_in_k = lines_processed as f64 / 1000.0;
                 pb.set_message(format!(
                     "{:.4}K lines, {} variants, {} matched",
-                    lines_processed as f64 / 1000.0,
+                    lines_in_k,
                     sample_data.iter().map(|sd| sd.total_variants).sum::<usize>(),
                     sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>()
                 ));
@@ -140,12 +142,16 @@ pub fn calculate_polygenic_score_multi(
 
     write_csv_output(output_path, vcf_path, &vcf_reader.sample_names, &sample_data, duration)?;
 
+    let avg_score = sample_data.iter().map(|sd| sd.score).sum::<f64>() / sample_data.len() as f64;
+    let total_variants = sample_data.iter().map(|sd| sd.total_variants).sum();
+    let matched_variants = sample_data.iter().map(|sd| sd.matched_variants).sum();
+
     println!("\nFinished processing.");
     println!("Total lines processed: {:.4}K", lines_processed as f64 / 1000.0);
     println!("Results written to: {}", output_path);
     println!("Processing time: {:?}", duration);
 
-    Ok(())
+    Ok((avg_score, total_variants, matched_variants))
 }
 
 fn process_line(line: &str, effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) {
@@ -181,13 +187,19 @@ fn write_csv_output(
     sample_data: &[SampleData],
     duration: std::time::Duration
 ) -> Result<(), VcfError> {
+    let path = Path::new(output_path);
+    let prefix = path.parent().unwrap_or_else(|| Path::new(""));
+    std::fs::create_dir_all(prefix).map_err(VcfError::Io)?;
+
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(output_path)?;
+        .open(output_path)
+        .map_err(VcfError::Io)?;
 
-    writeln!(file, "VCF_File,Sample_Name,Polygenic_Score,Calculation_Time_Seconds,Total_Variants,Matched_Variants")?;
+    writeln!(file, "VCF_File,Sample_Name,Polygenic_Score,Calculation_Time_Seconds,Total_Variants,Matched_Variants")
+        .map_err(VcfError::Io)?;
 
     for (name, data) in sample_names.iter().zip(sample_data.iter()) {
         writeln!(
@@ -199,7 +211,7 @@ fn write_csv_output(
             duration.as_secs_f64(),
             data.total_variants,
             data.matched_variants
-        )?;
+        ).map_err(VcfError::Io)?;
     }
 
     Ok(())
