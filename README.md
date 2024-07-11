@@ -89,10 +89,10 @@ A multi-sample VCF will have the following output format:
 
 | VCF_File                    | Sample_Name | Polygenic_Score | Calculation_Time_Seconds | Total_Variants | Matched_Variants |
 |-----------------------------|-------------|-----------------|--------------------------|----------------|------------------|
-| /path/to/your/file.vcf.gz   | HG00096     | -0.002532       | 1164.698128              | 45693          | 45693            |
-| /path/to/your/file.vcf.gz   | HG00097     | 0.007797        | 1164.698128              | 45693          | 45693            |
-| /path/to/your/file.vcf.gz   | HG00099     | -0.009080       | 1164.698128              | 45693          | 45693            |
-| /path/to/your/file.vcf.gz   | HG00100     | -0.012225       | 1164.698128              | 45693          | 45693            |
+| /path/to/your/file.vcf.gz   | HG00096     | -0.002532       | 10.968153              | 45693          | 45693            |
+| /path/to/your/file.vcf.gz   | HG00097     | 0.007797        | 10.968153              | 45693          | 45693            |
+| /path/to/your/file.vcf.gz   | HG00099     | -0.009080       | 10.968153              | 45693          | 45693            |
+| /path/to/your/file.vcf.gz   | HG00100     | -0.012225       | 10.968153              | 45693          | 45693            |
 
 
 
