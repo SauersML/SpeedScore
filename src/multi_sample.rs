@@ -78,6 +78,10 @@ fn open_vcf_reader(path: &str) -> Result<VcfReader<MultiGzDecoder<File>>, VcfErr
 
 
 
+
+
+
+
 pub fn calculate_polygenic_score_multi(
     path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -104,17 +108,17 @@ pub fn calculate_polygenic_score_multi(
     let mut total_matched = 0;
     let mut in_data_section = false;
     let mut lines_processed = 0;
-    let mut current_chr = 0;
-    let mut chr_variants = 0;
     let total_weights = effect_weights.len();
 
-    // Determine the maximum chromosome number in the effect weights
-    let max_chr = effect_weights.keys().map(|&(chr, _)| chr).max().unwrap_or(0);
+    // Estimate total lines based on effect weights (this is a rough estimate)
+    let estimated_total_lines = total_weights * 2; // Multiply by 2 as a conservative estimate
 
     if debug {
-        println!("Total variants to process: {}", total_weights);
-        println!("Maximum chromosome number: {}", max_chr);
+        println!("Estimated total lines to process: {}", estimated_total_lines);
+        println!("Total samples: {}", vcf_reader.sample_count);
     }
+
+    let progress_interval = std::cmp::max(estimated_total_lines / 100, 1000); // Update every 1% or 1000 lines, whichever is larger
 
     while vcf_reader.read_line(&mut line)? > 0 {
         if line.starts_with("#CHROM") {
@@ -139,24 +143,18 @@ pub fn calculate_polygenic_score_multi(
             total_matched += matched;
 
             // Update progress information
-            if variants > 0 {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if let Ok(chr) = parts[0].parse::<u8>() {
-                    if chr != current_chr {
-                        if current_chr != 0 {
-                            println!("Finished processing chromosome {}. Processed {} variants.", current_chr, chr_variants);
-                        }
-                        current_chr = chr;
-                        chr_variants = 0;
-                    }
-                    chr_variants += 1;
-
-                    if chr_variants % 10000 == 0 || total_variants % 100000 == 0 {
-                        let progress_percentage = (total_matched as f64 / total_weights as f64 * 100.0).min(100.0);
-                        println!("Progress: Processing chromosome {} ({} variants) - Overall: {:.2}% complete ({}/{} variants matched)",
-                                 current_chr, chr_variants, progress_percentage, total_matched, total_weights);
-                    }
-                }
+            if lines_processed % progress_interval == 0 {
+                let progress_percentage = (lines_processed as f64 / estimated_total_lines as f64 * 100.0).min(100.0);
+                let avg_score_per_sample = if vcf_reader.sample_count > 0 {
+                    total_score / vcf_reader.sample_count as f64
+                } else {
+                    0.0
+                };
+                println!("Progress: {:.2}% complete ({}/{} estimated lines)", 
+                         progress_percentage, lines_processed, estimated_total_lines);
+                println!("Processed {} variants, matched {} variants", total_variants, total_matched);
+                println!("Current average score per sample: {:.6}", avg_score_per_sample);
+                println!("Samples processed: {}", vcf_reader.sample_count);
             }
         }
     }
@@ -164,10 +162,11 @@ pub fn calculate_polygenic_score_multi(
     let duration = start_time.elapsed();
 
     if debug {
-        println!("Finished processing chromosome {}. Processed {} variants.", current_chr, chr_variants);
         println!("Finished reading all lines.");
+        println!("Total lines processed: {}", lines_processed);
         println!("Total variants processed: {}", total_variants);
         println!("Matched variants: {}", total_matched);
+        println!("Final average score per sample: {:.6}", total_score / vcf_reader.sample_count as f64);
         println!("Processing time: {:?}", duration);
         if total_variants == 0 {
             println!("Warning: No variants were processed!");
