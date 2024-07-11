@@ -99,8 +99,8 @@ fn debug_print_vcf_lines(path: &str) -> Result<(), VcfError> {
     let file = File::open(path)?;
     let reader = BufReader::new(GzDecoder::new(file));
     
-    for (i, line) in reader.lines().enumerate().take(50_000) {
-        if i % 100 == 0 {
+    for (i, line) in reader.lines().enumerate().take(1000) {
+        if i % 1 == 0 {
             let line = line?;
             let columns: Vec<&str> = line.split('\t').take(14).collect();
             println!("Line {}: {:?}", i, columns);
@@ -120,7 +120,7 @@ pub fn calculate_polygenic_score_multi(
     if debug {
         println!("Opening file: {}", path);
         println!("Effect weights loaded: {:?}", effect_weights.iter().take(5).collect::<Vec<_>>());
-        println!("Debugging: Printing first 14 columns of every 100th line for the first 50,000 lines");
+        println!("Debugging: Printing first 14 columns");
         debug_print_vcf_lines(path)?;
         println!("Debug print complete. Proceeding with normal processing.");
     }
