@@ -88,7 +88,7 @@ fn open_vcf_reader(path: &str) -> Result<BufReader<MultiGzDecoder<File>>, VcfErr
 
 pub fn calculate_polygenic_score_multi(
     vcf_path: &str,
-    effect_weights: &HashMap<(u8, u32), f32>,
+    effect_weights: &HashMap<(String, u32), f32>,
     output_path: &str,
     debug: bool
 ) -> Result<(f64, usize, usize), VcfError> {
@@ -127,6 +127,7 @@ pub fn calculate_polygenic_score_multi(
     let mut lines_processed = 0;
     let mut last_chr = 0;
     let mut last_pos = 0;
+
 
     loop {
         buffer.clear();
@@ -182,8 +183,9 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants))
 }
 
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(u8, u32)> {
-    let mut last_chr = 0;
+
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(String, u32)> {
+    let mut last_chr = String::new();
     let mut last_pos = 0;
 
     for line in chunk.split(|&b| b == b'\n') {
@@ -192,10 +194,10 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_
         }
 
         let mut parts = line.split(|&b| b == b'\t');
-        let chr = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u8>().ok()).unwrap_or(0);
+        let chr = parts.next().and_then(|s| std::str::from_utf8(s).ok().map(|s| s.to_string())).unwrap_or_default();
         let pos = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u32>().ok()).unwrap_or(0);
 
-        if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+        if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
             let genotypes = parts.skip(7);
             for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
                 sample.total_variants += 1;
