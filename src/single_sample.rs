@@ -38,11 +38,15 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
         }
         total_variants += 1;
 
+        if debug_count < 5 {
+            println!("Raw VCF line: {}", String::from_utf8_lossy(line));
+        }
+
         let mut parts = line.split(|&b| b == b'\t');
         if let (Some(chr), Some(pos), Some(genotype)) = (parts.next(), parts.next(), parts.nth(7)) {
             if let (Ok(chr), Ok(pos)) = (
-                std::str::from_utf8(chr).map(|s| s.to_string()),
-                std::str::from_utf8(pos).and_then(|s| Ok(s.parse::<u32>().ok().unwrap_or(0)))
+                std::str::from_utf8(chr).map(|s| s.trim().to_string()),
+                std::str::from_utf8(pos).and_then(|s| s.trim().parse::<u32>().map_err(|_| std::str::Utf8Error::from_unchecked(pos)))
             ) {
                 debug_count += 1;
                 if debug_count <= 5 {
@@ -57,11 +61,22 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
                     score += f64::from(weight) * allele_count as f64;
                     matched_variants += 1;
                     if debug_count <= 5 {
-                        println!("Matched variant: chr={}, pos={}, weight={}", chr, pos, weight);
+                        println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
                     }
                 }
+            } else {
+                if debug_count < 5 {
+                    println!("Failed to parse chr or pos: chr={:?}, pos={:?}", 
+                             String::from_utf8_lossy(chr), String::from_utf8_lossy(pos));
+                }
+            }
+        } else {
+            if debug_count < 5 {
+                println!("Failed to extract chr, pos, or genotype from VCF line");
             }
         }
+
+        debug_count += 1;
     }
 
     (score, total_variants, matched_variants)
