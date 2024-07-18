@@ -5,61 +5,53 @@ use memmap2::Mmap;
 use std::str;
 use std::io::{self, BufRead, BufReader};
 use flate2::read::GzDecoder;
+use noodles::vcf;
+use noodles::bgzf;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
-    let file = File::open(path)?;
-    let reader: Box<dyn BufRead> = if path.ends_with(".gz") {
-        Box::new(BufReader::new(GzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader = vcf::Reader::new(bgzf::Reader::new(File::open(path)?));
 
     let mut score = 0.0;
     let mut total_variants = 0;
     let mut matched_variants = 0;
     let mut debug_count = 0;
 
-    for line in reader.lines() {
-        let line = line?;
-        if line.starts_with('#') {
-            continue;
-        }
+    // Read and discard the header
+    reader.read_header()?;
+
+    let mut record = vcf::Record::default();
+    while reader.read_record(&mut record)? {
         total_variants += 1;
 
         if debug_count < 5 {
-            println!("Raw VCF line: {}", line);
+            println!("Raw VCF record: {:?}", record);
         }
 
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 10 {
-            if debug_count < 5 {
-                println!("Invalid VCF line format: {:?}", parts);
-            }
-            continue;
+        let chr = record.chromosome().to_string();
+        let pos = record.position().get() as u32;
+
+        debug_count += 1;
+        if debug_count <= 5 {
+            println!("Processing variant: chr={}, pos={}", chr, pos);
         }
 
-        let chr = parts[0].trim().to_string();
-        if let Ok(pos) = parts[1].trim().parse::<u32>() {
-            debug_count += 1;
+        if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
+            let genotype = record.genotypes().get("SAMPLE").and_then(|gt| gt.get(0));
+            let allele_count = match genotype {
+                Some(vcf::record::genotypes::sample::Value::Phased(0)) |
+                Some(vcf::record::genotypes::sample::Value::Unphased(0)) => 0,
+                Some(vcf::record::genotypes::sample::Value::Phased(1)) |
+                Some(vcf::record::genotypes::sample::Value::Unphased(1)) => 1,
+                Some(vcf::record::genotypes::sample::Value::Phased(2)) |
+                Some(vcf::record::genotypes::sample::Value::Unphased(2)) => 2,
+                _ => continue,
+            };
+
+            score += f64::from(weight) * allele_count as f64;
+            matched_variants += 1;
+
             if debug_count <= 5 {
-                println!("Processing variant: chr={}, pos={}", chr, pos);
-            }
-            if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
-                let genotype = parts[9];
-                let allele_count = match genotype.chars().next() {
-                    Some('0') => 0,
-                    Some('1') => if genotype.chars().nth(2) == Some('1') { 2 } else { 1 },
-                    _ => continue,
-                };
-                score += f64::from(weight) * allele_count as f64;
-                matched_variants += 1;
-                if debug_count <= 5 {
-                    println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
-                }
-            }
-        } else {
-            if debug_count < 5 {
-                println!("Failed to parse position: {:?}", parts[1]);
+                println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
             }
         }
 
