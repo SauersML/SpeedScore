@@ -49,7 +49,7 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
         if let (Some(chr), Some(pos), Some(genotype)) = (parts.next(), parts.next(), parts.nth(7)) {
             if let (Ok(chr), Ok(pos)) = (
                 std::str::from_utf8(chr).map(|s| s.trim().to_string()),
-                std::str::from_utf8(pos).and_then(|s| s.trim().parse::<u32>().ok())
+                std::str::from_utf8(pos).and_then(|s| Ok(s.trim().parse::<u32>().ok()))
             ) {
                 debug_count += 1;
                 if debug_count <= 5 {
