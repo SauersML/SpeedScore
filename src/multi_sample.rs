@@ -125,7 +125,7 @@ pub fn calculate_polygenic_score_multi(
     let mut buffer = Vec::new();
     let mut sample_data: Vec<SampleData> = vec![SampleData::default(); sample_names.len()];
     let mut lines_processed = 0;
-    let mut last_chr = 0;
+    let mut last_chr = String::new();
     let mut last_pos = 0;
 
 
@@ -146,7 +146,7 @@ pub fn calculate_polygenic_score_multi(
                         println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
                         io::stdout().flush().unwrap();
                     });
-                    last_chr = chr.clone();
+                    last_chr = chr;
                     last_pos = pos;
                 }
             }
