@@ -11,4 +11,3 @@ flate2 = "1.0"
 regex = "1.5.4"
 indicatif = "0.17.3"
 thousands = "0.2.0"
-noodles = { version = "0.32", features = ["vcf"] }
