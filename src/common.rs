@@ -93,8 +93,8 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
             io::Error::new(io::ErrorKind::InvalidData, "Missing 'effect_weight' column")
         })?;
 
-        if let (Ok(chr), Ok(pos), Ok(weight)) = (
-            Ok(parts[chr_index].to_string()),
+        if let (chr, Ok(pos), Ok(weight)) = (
+            parts[chr_index].to_string(),
             parts[pos_index].parse::<u32>(),
             parts[weight_index].parse::<f32>()
         ) {
