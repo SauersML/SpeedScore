@@ -34,8 +34,8 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
         let mut parts = line.split(|&b| b == b'\t');
         if let (Some(chr), Some(pos), Some(genotype)) = (parts.next(), parts.next(), parts.nth(7)) {
             if let (Ok(chr), Ok(pos)) = (
-                std::str::from_utf8(chr).and_then(|s| s.parse::<u8>().map_err(|e| std::str::Utf8Error::from(e))),
-                std::str::from_utf8(pos).and_then(|s| s.parse::<u32>().map_err(|e| std::str::Utf8Error::from(e)))
+                std::str::from_utf8(chr).ok().and_then(|s| s.parse::<u8>().ok()),
+                std::str::from_utf8(pos).ok().and_then(|s| s.parse::<u32>().ok())
             ) {
                 if let Some(&weight) = effect_weights.get(&(chr, pos)) {
                     let allele_count = match genotype.get(0) {
