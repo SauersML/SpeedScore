@@ -7,19 +7,30 @@ use noodles::vcf;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(u8, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
-    let chunk_size = 1024 * 1024 * 10; // 10MB chunks
-    let num_chunks = (mmap.len() + chunk_size - 1) / chunk_size;
-    let results: Vec<_> = (0..num_chunks)
-        .into_par_iter()
-        .map(|i| {
-            let start = i * chunk_size;
-            let end = (start + chunk_size).min(mmap.len());
-            process_chunk(&mmap[start..end], effect_weights)
-        })
-        .collect();
-    let (score, total_variants, matched_variants) = results.into_iter()
-        .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
+    let buf_reader = BufReader::new(file);
+    let mut reader = vcf::Reader::new(buf_reader);
+
+    let mut score = 0.0;
+    let mut total_variants = 0;
+    let mut matched_variants = 0;
+
+    reader.read_header()?;
+
+    for result in reader.records() {
+        let record = result?;
+        total_variants += 1;
+
+        if let (Some(chr), Some(pos)) = (record.chromosome().parse::<u8>().ok(), record.position().get() as u32) {
+            if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+                if let Some(genotype) = record.genotypes().get(0) {
+                    let allele_count = genotype.count();
+                    score += f64::from(weight) * allele_count as f64;
+                    matched_variants += 1;
+                }
+            }
+        }
+    }
+
     Ok((score, total_variants, matched_variants))
 }
 
