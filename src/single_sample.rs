@@ -48,7 +48,7 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
                 if debug_count <= 5 {
                     println!("Processing variant: chr={}, pos={}", chr, pos);
                 }
-                if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+                if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
                     let allele_count = match genotype.get(0) {
                         Some(b'0') => 0,
                         Some(b'1') => if genotype.get(2) == Some(&b'1') { 2 } else { 1 },
