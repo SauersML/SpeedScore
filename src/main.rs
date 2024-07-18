@@ -10,6 +10,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let effect_weights = load_scoring_file(&args.scoring)?;
     
+    println!("Loaded {} variants from scoring file", effect_weights.len());
+    println!("First 5 entries in effect_weights:");
+    for (i, ((chr, pos), weight)) in effect_weights.iter().take(5).enumerate() {
+        println!("  {}: Chr {}, Pos {}, Weight {}", i+1, chr, pos, weight);
+    }
+
+    println!("\nFirst 5 lines of VCF file:");
+    single_sample::debug_first_lines(&args.vcf, 5)?;
+
     let file_type = FileType::detect(&args.vcf)?;
     
     let (score, total_variants, matched_variants) = match file_type {
