@@ -102,32 +102,6 @@ pub fn calculate_polygenic_score_multi(
     let mut header_line = String::new();
     let mut sample_names = Vec::new();
 
-    // Find the header
-    loop {
-        reader.read_line(&mut header_line)?;
-        if header_line.starts_with("#CHROM") {
-            sample_names = header_line.split_whitespace().skip(9).map(String::from).collect();
-            break;
-        }
-        header_line.clear();
-    }
-
-    println!("VCF data start found.");
-    println!("Sample count: {}", sample_names.len());
-    println!("Processing variants...");
-
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::default_spinner()
-        .template("{spinner:.green} [{elapsed_precise}] {msg}")
-        .unwrap());
-    pb.set_message("Processing...");
-
-    let mut buffer = Vec::new();
-    let mut sample_data: Vec<SampleData> = vec![SampleData::default(); sample_names.len()];
-    let mut lines_processed = 0;
-    let mut last_chr = 0;
-    let mut last_pos = 0;
-
     loop {
         buffer.clear();
         let num_lines = reader.read_until(b'\n', &mut buffer)?;
@@ -138,9 +112,15 @@ pub fn calculate_polygenic_score_multi(
         lines_processed += 1;
 
         if !buffer.starts_with(&[b'#']) {
-            let result = process_chunk(&buffer, effect_weights, &mut sample_data, debug);
-            if let Some((chr, pos)) = result {
-                if debug && (chr != last_chr || pos > last_pos + 20_000_000) {
+            let (score, total, matched) = process_chunk(&buffer, effect_weights);
+            for sample in sample_data.iter_mut() {
+                sample.score += score;
+                sample.total_variants += total;
+                sample.matched_variants += matched;
+            }
+            if debug {
+                let (chr, pos) = get_chr_pos(&buffer);
+                if chr != last_chr || pos > last_pos + 20_000_000 {
                     pb.suspend(|| {
                         println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
                         io::stdout().flush().unwrap();
