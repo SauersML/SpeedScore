@@ -32,7 +32,7 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
         }
         total_variants += 1;
         let mut parts = line.split(|&b| b == b'\t');
-        if let (Some(chr), Some(pos), Some(_ref), Some(alt), Some(genotype)) = (parts.next(), parts.next(), parts.next(), parts.next(), parts.nth(5)) {
+        if let (Some(chr), Some(pos), Some(_ref), Some(_alt), Some(genotype)) = (parts.next(), parts.next(), parts.next(), parts.next(), parts.nth(5)) {
             if let (Some(chr), Some(pos)) = (
                 std::str::from_utf8(chr).ok().and_then(|s| s.parse::<u8>().ok()),
                 std::str::from_utf8(pos).ok().and_then(|s| s.parse::<u32>().ok())
