@@ -85,7 +85,6 @@ fn open_vcf_reader(path: &str) -> Result<BufReader<MultiGzDecoder<File>>, VcfErr
     Ok(BufReader::with_capacity(1024 * 1024, decoder)) // 1MB buffer
 }
 
-
 pub fn calculate_polygenic_score_multi(
     vcf_path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -121,7 +120,6 @@ pub fn calculate_polygenic_score_multi(
         .unwrap());
     pb.set_message("Processing...");
 
-    let chunk_size = 10000; // Process 10,000 lines at a time
     let mut buffer = Vec::new();
     let mut sample_data: Vec<SampleData> = vec![SampleData::default(); sample_names.len()];
     let mut lines_processed = 0;
@@ -182,7 +180,7 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants))
 }
 
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(u8, u32)> {
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], _debug: bool) -> Option<(u8, u32)> {
     let mut last_chr = 0;
     let mut last_pos = 0;
 
@@ -216,7 +214,6 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_
 
     Some((last_chr, last_pos))
 }
-
 
 fn write_csv_output(
     output_path: &str,
