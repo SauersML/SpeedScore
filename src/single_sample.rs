@@ -3,65 +3,77 @@ use std::fs::File;
 use rayon::prelude::*;
 use memmap2::Mmap;
 use std::str;
-use std::io::{self, BufRead, BufReader};
-use flate2::read::GzDecoder;
 use noodles::bgzf;
 use noodles::vcf::{self, record::GenotypeField};
-
-
+use std::collections::HashMap;
+use std::io::{self, BufRead, BufReader};
+use flate2::read::MultiGzDecoder;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
-    let mut reader = vcf::Reader::new(bgzf::Reader::new(File::open(path)?));
+    let file = File::open(path)?;
+    let reader = BufReader::new(MultiGzDecoder::new(file));
 
     let mut score = 0.0;
     let mut total_variants = 0;
     let mut matched_variants = 0;
-    let mut debug_count = 0;
 
-    // Read and discard the header
-    let header = reader.read_header()?;
+    for (index, line) in reader.lines().enumerate() {
+        let line = line?;
+        
+        if line.starts_with('#') {
+            continue;
+        }
 
-    while let Some(result) = reader.read_record(&mut vcf::Record::default()) {
-        let record = result?;
         total_variants += 1;
 
-        if debug_count < 5 {
-            println!("Raw VCF record: {:?}", record);
+        if index < 5 {
+            println!("Raw VCF line {}: {}", index + 1, line);
         }
 
-        let chr = record.chromosome().to_string();
-        let pos = record.position().get() as u32;
-
-        debug_count += 1;
-        if debug_count <= 5 {
-            println!("Processing variant: chr={}, pos={}", chr, pos);
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 10 {
+            if index < 5 {
+                println!("Invalid VCF line format: {:?}", parts);
+            }
+            continue;
         }
 
-        if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
-            if let Some(genotypes) = record.genotypes() {
-                if let Some(sample) = genotypes.get(0) {
-                    let allele_count = match sample.get(0) {
-                        Some(GenotypeField::Value(0)) => 0,
-                        Some(GenotypeField::Value(1)) => 1,
-                        Some(GenotypeField::Value(2)) => 2,
-                        _ => continue,
-                    };
+        let chr = parts[0].to_string();
+        if let Ok(pos) = parts[1].parse::<u32>() {
+            if index < 5 {
+                println!("Processing variant: chr={}, pos={}", chr, pos);
+            }
 
-                    score += f64::from(weight) * allele_count as f64;
-                    matched_variants += 1;
+            if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
+                let genotype = parts[9];
+                let allele_count = match genotype.chars().next() {
+                    Some('0') => 0,
+                    Some('1') => if genotype.chars().nth(2) == Some('1') { 2 } else { 1 },
+                    _ => continue,
+                };
 
-                    if debug_count <= 5 {
-                        println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
-                    }
+                score += f64::from(weight) * allele_count as f64;
+                matched_variants += 1;
+
+                if index < 5 {
+                    println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
                 }
             }
+        } else {
+            if index < 5 {
+                println!("Failed to parse position: {:?}", parts[1]);
+            }
         }
-
-        debug_count += 1;
     }
 
     Ok((score, total_variants, matched_variants))
 }
+
+
+
+
+
+
 
 fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> (f64, usize, usize) {
     let mut score = 0.0;
