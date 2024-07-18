@@ -5,7 +5,6 @@ use std::time::Instant;
 use std::path::Path;
 use flate2::read::MultiGzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::cmp::Ordering;
 
 #[derive(Debug)]
 pub enum VcfError {
