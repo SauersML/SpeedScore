@@ -1,32 +1,73 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io;
 use rayon::prelude::*;
 use memmap2::Mmap;
 use std::str;
+use std::io::{self, BufRead, BufReader};
+use flate2::read::GzDecoder;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
+    let reader: Box<dyn BufRead> = if path.ends_with(".gz") {
+        Box::new(BufReader::new(GzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
 
-    let chunk_size = 1024 * 1024 * 10; // 10MB chunks
-    let num_chunks = (mmap.len() + chunk_size - 1) / chunk_size;
+    let mut score = 0.0;
+    let mut total_variants = 0;
+    let mut matched_variants = 0;
+    let mut debug_count = 0;
 
-    let results: Vec<_> = (0..num_chunks)
-        .into_par_iter()
-        .map(|i| {
-            let start = i * chunk_size;
-            let end = (start + chunk_size).min(mmap.len());
-            process_chunk(&mmap[start..end], effect_weights)
-        })
-        .collect();
+    for line in reader.lines() {
+        let line = line?;
+        if line.starts_with('#') {
+            continue;
+        }
+        total_variants += 1;
 
-    let (score, total_variants, matched_variants) = results.into_iter()
-        .fold((0.0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
+        if debug_count < 5 {
+            println!("Raw VCF line: {}", line);
+        }
+
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 10 {
+            if debug_count < 5 {
+                println!("Invalid VCF line format: {:?}", parts);
+            }
+            continue;
+        }
+
+        let chr = parts[0].trim().to_string();
+        if let Ok(pos) = parts[1].trim().parse::<u32>() {
+            debug_count += 1;
+            if debug_count <= 5 {
+                println!("Processing variant: chr={}, pos={}", chr, pos);
+            }
+            if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
+                let genotype = parts[9];
+                let allele_count = match genotype.chars().next() {
+                    Some('0') => 0,
+                    Some('1') => if genotype.chars().nth(2) == Some('1') { 2 } else { 1 },
+                    _ => continue,
+                };
+                score += f64::from(weight) * allele_count as f64;
+                matched_variants += 1;
+                if debug_count <= 5 {
+                    println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
+                }
+            }
+        } else {
+            if debug_count < 5 {
+                println!("Failed to parse position: {:?}", parts[1]);
+            }
+        }
+
+        debug_count += 1;
+    }
 
     Ok((score, total_variants, matched_variants))
 }
-
 
 fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> (f64, usize, usize) {
     let mut score = 0.0;
