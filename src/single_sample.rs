@@ -3,6 +3,8 @@ use std::fs::File;
 use std::io;
 use rayon::prelude::*;
 use memmap2::Mmap;
+use std::io::{self, BufRead};
+use noodles::vcf;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(u8, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
@@ -53,17 +55,21 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
 }
 
 pub fn debug_first_lines(path: &str, num_lines: usize) -> io::Result<()> {
-    let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
-    let mut line_count = 0;
-    for line in mmap.split(|&b| b == b'\n') {
-        if line_count >= num_lines {
-            break;
-        }
-        if !line.is_empty() && line[0] != b'#' {
-            println!("Line {}: {:?}", line_count, std::str::from_utf8(line));
-            line_count += 1;
+    let mut reader = vcf::Reader::new(File::open(path)?);
+
+    println!("VCF header:");
+    match reader.read_header() {
+        Ok(header) => println!("{}", header),
+        Err(e) => println!("Error reading header: {:?}", e),
+    }
+
+    println!("\nFirst {} data lines:", num_lines);
+    for (i, result) in reader.records().take(num_lines).enumerate() {
+        match result {
+            Ok(record) => println!("Line {}: {:?}", i, record),
+            Err(e) => println!("Error reading line {}: {:?}", i, e),
         }
     }
+
     Ok(())
 }
