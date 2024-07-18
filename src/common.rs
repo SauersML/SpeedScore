@@ -57,7 +57,8 @@ impl FileType {
 
 
 
-pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> {
+
+pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(u8, u32), f32>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut effect_weights = HashMap::new();
@@ -94,7 +95,7 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
         })?;
 
         if let (Ok(chr), Ok(pos), Ok(weight)) = (
-            parts[chr_index].parse::<String>(),
+            parts[chr_index].parse::<u8>(),
             parts[pos_index].parse::<u32>(),
             parts[weight_index].parse::<f32>()
         ) {
@@ -104,6 +105,8 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
 
     Ok(effect_weights)
 }
+
+
 
 pub fn output_results(args: &Args, score: f64, total_variants: usize, matched_variants: usize, duration: Duration, scoring_variants: usize) -> io::Result<()> {
     let output = format!(
