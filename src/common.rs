@@ -63,6 +63,8 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
     let mut effect_weights = HashMap::new();
     let mut headers: Option<Vec<String>> = None;
 
+
+    let mut count = 0;
     for line in reader.lines() {
         let line = line?;
         if line.starts_with('#') {
@@ -98,10 +100,15 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
             parts[pos_index].parse::<u32>(),
             parts[weight_index].parse::<f32>()
         ) {
-            effect_weights.insert((chr, pos), weight);
+            effect_weights.insert((chr.clone(), pos), weight);
+            count += 1;
+            if count <= 5 {
+                println!("Loaded scoring data: chr={}, pos={}, weight={}", chr, pos, weight);
+            }
         }
     }
 
+    println!("Total scoring entries loaded: {}", effect_weights.len());
     Ok(effect_weights)
 }
 
