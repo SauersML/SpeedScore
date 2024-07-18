@@ -99,7 +99,6 @@ pub fn calculate_polygenic_score_multi(
 
     let mut reader = open_vcf_reader(vcf_path)?;
     let mut header_line = String::new();
-    let mut sample_names = Vec::new();
 
     // Find the header
     loop {
