@@ -162,6 +162,12 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants))
 }
 
+fn get_chr_pos(line: &[u8]) -> (u8, u32) {
+    let mut parts = line.split(|&b| b == b'\t');
+    let chr = parts.next().and_then(parse_u8).unwrap_or(0);
+    let pos = parts.next().and_then(parse_u32).unwrap_or(0);
+    (chr, pos)
+}
 
 fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64, usize, usize) {
     let mut score = 0.0;
