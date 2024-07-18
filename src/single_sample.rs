@@ -65,7 +65,9 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
 }
 
 pub fn debug_first_lines(path: &str, num_lines: usize) -> io::Result<()> {
-    let mut reader = vcf::Reader::new(File::open(path)?);
+    let file = File::open(path)?;
+    let buf_reader = BufReader::new(file);
+    let mut reader = vcf::Reader::new(buf_reader);
 
     println!("VCF header:");
     match reader.read_header() {
