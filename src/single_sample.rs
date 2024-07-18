@@ -32,8 +32,8 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
         }
         total_variants += 1;
         let mut parts = line.split(|&b| b == b'\t');
-        if let (Some(chr), Some(pos), Some(genotype)) = (parts.next(), parts.next(), parts.nth(7)) {
-            if let (Some(chr), Some(pos)) = (
+        if let (Some(chr), Some(pos), Some(_ref), Some(alt), Some(genotype)) = (parts.next(), parts.next(), parts.next(), parts.next(), parts.nth(5)) {
+            if let (Ok(chr), Ok(pos)) = (
                 std::str::from_utf8(chr).ok().and_then(|s| s.parse::<u8>().ok()),
                 std::str::from_utf8(pos).ok().and_then(|s| s.parse::<u32>().ok())
             ) {
@@ -50,4 +50,20 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
         }
     }
     (score, total_variants, matched_variants)
+}
+
+pub fn debug_first_lines(path: &str, num_lines: usize) -> io::Result<()> {
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let mut line_count = 0;
+    for line in mmap.split(|&b| b == b'\n') {
+        if line_count >= num_lines {
+            break;
+        }
+        if !line.is_empty() && line[0] != b'#' {
+            println!("Line {}: {:?}", line_count, std::str::from_utf8(line));
+            line_count += 1;
+        }
+    }
+    Ok(())
 }
