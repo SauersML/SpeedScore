@@ -1,13 +1,8 @@
 use std::collections::HashMap;
 use std::fs::File;
-use rayon::prelude::*;
-use memmap2::Mmap;
-use std::str;
-use noodles::bgzf;
-use noodles::vcf::{self, record::GenotypeField};
-use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader};
 use flate2::read::MultiGzDecoder;
+use std::str;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
@@ -68,7 +63,6 @@ pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u
 
     Ok((score, total_variants, matched_variants))
 }
-
 
 
 
