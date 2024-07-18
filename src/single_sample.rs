@@ -4,7 +4,7 @@ use std::io;
 use rayon::prelude::*;
 use memmap2::Mmap;
 
-pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(u8, u32), f32>) -> io::Result<(f64, usize, usize)> {
+pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file)? };
 
@@ -26,7 +26,7 @@ pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(u8, u32),
     Ok((score, total_variants, matched_variants))
 }
 
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64, usize, usize) {
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> (f64, usize, usize) {
     let mut score = 0.0;
     let mut total_variants = 0;
     let mut matched_variants = 0;
@@ -39,9 +39,9 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64
 
         let mut parts = line.split(|&b| b == b'\t');
         if let (Some(chr), Some(pos), Some(genotype)) = (parts.next(), parts.next(), parts.nth(7)) {
-            if let (Some(chr), Some(pos)) = (
-                std::str::from_utf8(chr).ok().and_then(|s| s.parse::<u8>().ok()),
-                std::str::from_utf8(pos).ok().and_then(|s| s.parse::<u32>().ok())
+            if let (Ok(chr), Ok(pos)) = (
+                std::str::from_utf8(chr).map(|s| s.to_string()),
+                std::str::from_utf8(pos).and_then(|s| s.parse::<u32>().ok())
             ) {
                 if let Some(&weight) = effect_weights.get(&(chr, pos)) {
                     let allele_count = match genotype.get(0) {
