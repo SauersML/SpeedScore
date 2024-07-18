@@ -31,6 +31,7 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
     let mut total_variants = 0;
     let mut matched_variants = 0;
 
+    let mut debug_count = 0;
     for line in chunk.split(|&b| b == b'\n') {
         if line.is_empty() || line[0] == b'#' {
             continue;
@@ -43,6 +44,10 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
                 std::str::from_utf8(chr).map(|s| s.to_string()),
                 std::str::from_utf8(pos).and_then(|s| Ok(s.parse::<u32>().ok().unwrap_or(0)))
             ) {
+                debug_count += 1;
+                if debug_count <= 5 {
+                    println!("Processing variant: chr={}, pos={}", chr, pos);
+                }
                 if let Some(&weight) = effect_weights.get(&(chr, pos)) {
                     let allele_count = match genotype.get(0) {
                         Some(b'0') => 0,
@@ -51,6 +56,9 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>) -> 
                     };
                     score += f64::from(weight) * allele_count as f64;
                     matched_variants += 1;
+                    if debug_count <= 5 {
+                        println!("Matched variant: chr={}, pos={}, weight={}", chr, pos, weight);
+                    }
                 }
             }
         }
