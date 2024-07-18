@@ -5,8 +5,10 @@ use memmap2::Mmap;
 use std::str;
 use std::io::{self, BufRead, BufReader};
 use flate2::read::GzDecoder;
-use noodles::vcf;
 use noodles::bgzf;
+use noodles::vcf::{self, record::GenotypeField};
+
+
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let mut reader = vcf::Reader::new(bgzf::Reader::new(File::open(path)?));
@@ -17,10 +19,10 @@ pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u
     let mut debug_count = 0;
 
     // Read and discard the header
-    reader.read_header()?;
+    let header = reader.read_header()?;
 
-    let mut record = vcf::Record::default();
-    while reader.read_record(&mut record)? {
+    while let Some(result) = reader.read_record(&mut vcf::Record::default()) {
+        let record = result?;
         total_variants += 1;
 
         if debug_count < 5 {
@@ -36,22 +38,22 @@ pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u
         }
 
         if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
-            let genotype = record.genotypes().get("SAMPLE").and_then(|gt| gt.get(0));
-            let allele_count = match genotype {
-                Some(vcf::record::genotypes::sample::Value::Phased(0)) |
-                Some(vcf::record::genotypes::sample::Value::Unphased(0)) => 0,
-                Some(vcf::record::genotypes::sample::Value::Phased(1)) |
-                Some(vcf::record::genotypes::sample::Value::Unphased(1)) => 1,
-                Some(vcf::record::genotypes::sample::Value::Phased(2)) |
-                Some(vcf::record::genotypes::sample::Value::Unphased(2)) => 2,
-                _ => continue,
-            };
+            if let Some(genotypes) = record.genotypes() {
+                if let Some(sample) = genotypes.get(0) {
+                    let allele_count = match sample.get(0) {
+                        Some(GenotypeField::Value(0)) => 0,
+                        Some(GenotypeField::Value(1)) => 1,
+                        Some(GenotypeField::Value(2)) => 2,
+                        _ => continue,
+                    };
 
-            score += f64::from(weight) * allele_count as f64;
-            matched_variants += 1;
+                    score += f64::from(weight) * allele_count as f64;
+                    matched_variants += 1;
 
-            if debug_count <= 5 {
-                println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
+                    if debug_count <= 5 {
+                        println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
+                    }
+                }
             }
         }
 
