@@ -86,7 +86,6 @@ fn open_vcf_reader(path: &str) -> Result<BufReader<MultiGzDecoder<File>>, VcfErr
     Ok(BufReader::with_capacity(1024 * 1024, decoder)) // 1MB buffer
 }
 
-
 pub fn calculate_polygenic_score_multi(
     vcf_path: &str,
     effect_weights: &HashMap<(u8, u32), f32>,
@@ -101,6 +100,32 @@ pub fn calculate_polygenic_score_multi(
     let mut reader = open_vcf_reader(vcf_path)?;
     let mut header_line = String::new();
     let mut sample_names = Vec::new();
+
+    // Find the header
+    loop {
+        reader.read_line(&mut header_line)?;
+        if header_line.starts_with("#CHROM") {
+            sample_names = header_line.split_whitespace().skip(9).map(String::from).collect();
+            break;
+        }
+        header_line.clear();
+    }
+
+    println!("VCF data start found.");
+    println!("Sample count: {}", sample_names.len());
+    println!("Processing variants...");
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_spinner()
+        .template("{spinner:.green} [{elapsed_precise}] {msg}")
+        .unwrap());
+    pb.set_message("Processing...");
+
+    let mut buffer = Vec::new();
+    let mut sample_data: Vec<SampleData> = vec![SampleData::default(); sample_names.len()];
+    let mut lines_processed = 0;
+    let mut last_chr = 0;
+    let mut last_pos = 0;
 
     loop {
         buffer.clear();
