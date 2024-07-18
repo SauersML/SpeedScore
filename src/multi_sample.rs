@@ -181,39 +181,59 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants))
 }
 
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], _debug: bool) -> Option<(u8, u32)> {
-    let mut last_chr = 0;
-    let mut last_pos = 0;
 
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>) -> (f64, usize, usize) {
+    let mut score = 0.0;
+    let mut total_variants = 0;
+    let mut matched_variants = 0;
     for line in chunk.split(|&b| b == b'\n') {
-        if line.is_empty() {
+        if line.is_empty() || line[0] == b'#' {
             continue;
         }
-
+        total_variants += 1;
         let mut parts = line.split(|&b| b == b'\t');
-        let chr = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u8>().ok()).unwrap_or(0);
-        let pos = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u32>().ok()).unwrap_or(0);
-
-        if let Some(&weight) = effect_weights.get(&(chr, pos)) {
-            let genotypes = parts.skip(7);
-            for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
-                sample.total_variants += 1;
-                match genotype.first() {
-                    Some(b'0') => sample.matched_variants += 1,
-                    Some(b'1') => {
-                        sample.score += f64::from(weight);
-                        sample.matched_variants += 1;
-                    }
-                    _ => {}
+        if let (Some(chr), Some(pos), Some(_ref), Some(_alt), Some(genotype)) = (parts.next(), parts.next(), parts.next(), parts.next(), parts.nth(5)) {
+            if let (Some(chr), Some(pos)) = (
+                parse_u8(chr),
+                parse_u32(pos)
+            ) {
+                if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+                    let allele_count = match genotype.get(0) {
+                        Some(b'0') => 0,
+                        Some(b'1') => if genotype.get(2) == Some(&b'1') { 2 } else { 1 },
+                        _ => continue,
+                    };
+                    score += f64::from(weight) * allele_count as f64;
+                    matched_variants += 1;
                 }
             }
         }
-
-        last_chr = chr;
-        last_pos = pos;
     }
+    (score, total_variants, matched_variants)
+}
 
-    Some((last_chr, last_pos))
+fn parse_u8(bytes: &[u8]) -> Option<u8> {
+    std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+fn parse_u32(bytes: &[u8]) -> Option<u32> {
+    std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+pub fn debug_first_lines(path: &str, num_lines: usize) -> io::Result<()> {
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let mut line_count = 0;
+    for line in mmap.split(|&b| b == b'\n') {
+        if line_count >= num_lines {
+            break;
+        }
+        if !line.is_empty() && line[0] != b'#' {
+            println!("Line {}: {:?}", line_count, line);
+            line_count += 1;
+        }
+    }
+    Ok(())
 }
 
 fn write_csv_output(
