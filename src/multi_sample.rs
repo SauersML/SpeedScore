@@ -5,6 +5,7 @@ use std::time::Instant;
 use std::path::Path;
 use flate2::read::MultiGzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::cmp::Ordering;
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -146,7 +147,7 @@ pub fn calculate_polygenic_score_multi(
                         println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
                         io::stdout().flush().unwrap();
                     });
-                    last_chr = chr;
+                    last_chr = chr.clone();
                     last_pos = pos;
                 }
             }
@@ -184,7 +185,7 @@ pub fn calculate_polygenic_score_multi(
 }
 
 
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(String, u32)> {
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sample_data: &mut [SampleData], _debug: bool) -> Option<(String, u32)> {
     let mut last_chr = String::new();
     let mut last_pos = 0;
 
