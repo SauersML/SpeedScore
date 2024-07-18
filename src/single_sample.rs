@@ -1,20 +1,19 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader};
-use flate2::bufread::MultiGzDecoder;
+use std::io::{self, BufRead, BufReader};
+use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
-use memmap2::Mmap;
 
 pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
-    let decoder = MultiGzDecoder::new(BufReader::new(&mmap[..]));
-    let decompressed = io::read_to_string(decoder)?;
+    let reader = BufReader::with_capacity(1024 * 1024, MultiGzDecoder::new(file)); // 1MB buffer
 
-    let (score, total_variants, matched_variants) = decompressed
-        .par_lines()
-        .filter(|line| !line.starts_with('#'))
+    let lines: Vec<String> = reader.lines().collect::<io::Result<_>>()?;
+
+    let (score, total_variants, matched_variants) = lines
+        .par_iter()
         .enumerate()
+        .filter(|(_, line)| !line.starts_with('#'))
         .map(|(index, line)| process_line(line, effect_weights, index))
         .reduce(
             || (0.0, 0, 0),
@@ -27,6 +26,10 @@ pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u
 }
 
 fn process_line(line: &str, effect_weights: &HashMap<(String, u32), f32>, index: usize) -> (f64, usize, usize) {
+    if index < 5 {
+        println!("Raw VCF line {}: {}", index + 1, line);
+    }
+
     let parts: Vec<&str> = line.split('\t').collect();
     if parts.len() < 10 {
         if index < 5 {
