@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, BufRead, BufReader, Write};
-use std::time::{Instant, Duration};
+use std::time::Instant;
 use std::path::Path;
 use flate2::read::MultiGzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
-use noodles::vcf;
 
 #[derive(Debug)]
 pub enum VcfError {
@@ -38,6 +37,38 @@ impl From<std::string::FromUtf8Error> for VcfError {
     }
 }
 
+struct VcfReader<R: Read> {
+    reader: BufReader<R>,
+    sample_names: Vec<String>,
+}
+
+impl<R: Read> VcfReader<R> {
+    fn new(reader: R) -> Result<Self, VcfError> {
+        let mut vcf_reader = VcfReader {
+            reader: BufReader::new(reader),
+            sample_names: Vec::new(),
+        };
+        vcf_reader.find_header()?;
+        Ok(vcf_reader)
+    }
+
+    fn find_header(&mut self) -> Result<(), VcfError> {
+        for line in self.reader.by_ref().lines() {
+            let line = line?;
+            if line.starts_with("#CHROM") {
+                self.sample_names = line.split_whitespace().skip(9).map(String::from).collect();
+                return Ok(());
+            }
+        }
+        Err(VcfError::InvalidFormat("VCF header not found".to_string()))
+    }
+
+    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
+        buf.clear();
+        Ok(self.reader.read_line(buf)?)
+    }
+}
+
 #[derive(Clone, Default)]
 struct SampleData {
     score: f64,
@@ -45,11 +76,15 @@ struct SampleData {
     total_variants: usize,
 }
 
+
+
+
 fn open_vcf_reader(path: &str) -> Result<BufReader<MultiGzDecoder<File>>, VcfError> {
     let file = File::open(path).map_err(VcfError::Io)?;
     let decoder = MultiGzDecoder::new(file);
     Ok(BufReader::with_capacity(1024 * 1024, decoder)) // 1MB buffer
 }
+
 
 pub fn calculate_polygenic_score_multi(
     vcf_path: &str,
@@ -62,13 +97,19 @@ pub fn calculate_polygenic_score_multi(
     println!("Opening file: {}", vcf_path);
     println!("Effect weights loaded: {} variants", effect_weights.len());
 
-    let file = File::open(vcf_path)?;
-    let decoder = MultiGzDecoder::new(file);
-    let buf_reader = BufReader::new(decoder);
-    let mut reader = vcf::Reader::new(buf_reader);
+    let mut reader = open_vcf_reader(vcf_path)?;
+    let mut header_line = String::new();
+    let mut sample_names = Vec::new();
 
-    let header = reader.read_header()?;
-    let sample_names: Vec<String> = header.sample_names().iter().map(|&s| s.to_string()).collect();
+    // Find the header
+    loop {
+        reader.read_line(&mut header_line)?;
+        if header_line.starts_with("#CHROM") {
+            sample_names = header_line.split_whitespace().skip(9).map(String::from).collect();
+            break;
+        }
+        header_line.clear();
+    }
 
     println!("VCF data start found.");
     println!("Sample count: {}", sample_names.len());
@@ -80,28 +121,26 @@ pub fn calculate_polygenic_score_multi(
         .unwrap());
     pb.set_message("Processing...");
 
+    let chunk_size = 10000; // Process 10,000 lines at a time
+    let mut buffer = Vec::new();
     let mut sample_data: Vec<SampleData> = vec![SampleData::default(); sample_names.len()];
     let mut lines_processed = 0;
     let mut last_chr = 0;
     let mut last_pos = 0;
 
-    for result in reader.records(&header) {
-        let record = result?;
+    loop {
+        buffer.clear();
+        let num_lines = reader.read_until(b'\n', &mut buffer)?;
+        if num_lines == 0 {
+            break;
+        }
+
         lines_processed += 1;
 
-        if let (Some(chr), Some(pos)) = (record.chromosome().to_string().parse::<u8>().ok(), Some(record.position().value() as u32)) {
-            if let Some(&weight) = effect_weights.get(&(chr, pos)) {
-                for (i, genotype) in record.genotypes().iter().enumerate() {
-                    let allele_count = count_alt_alleles(genotype);
-                    sample_data[i].score += f64::from(weight) * allele_count as f64;
-                    sample_data[i].matched_variants += 1;
-                }
-            }
-            for sample in sample_data.iter_mut() {
-                sample.total_variants += 1;
-            }
-            if debug {
-                if chr != last_chr || pos > last_pos + 20_000_000 {
+        if !buffer.starts_with(&[b'#']) {
+            let result = process_chunk(&buffer, effect_weights, &mut sample_data, debug);
+            if let Some((chr, pos)) = result {
+                if debug && (chr != last_chr || pos > last_pos + 20_000_000) {
                     pb.suspend(|| {
                         println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
                         io::stdout().flush().unwrap();
@@ -143,37 +182,48 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants))
 }
 
-fn count_alt_alleles(genotype: &noodles::vcf::record::genotypes::sample::Value) -> u32 {
-    genotype.iter().filter(|&allele| allele == &noodles::vcf::record::genotypes::sample::value::Genotype::Phased(1)).count() as u32
-}
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(u8, u32), f32>, sample_data: &mut [SampleData], debug: bool) -> Option<(u8, u32)> {
+    let mut last_chr = 0;
+    let mut last_pos = 0;
 
-pub fn debug_first_lines(path: &str, num_lines: usize) -> io::Result<()> {
-    let file = File::open(path)?;
-    let decoder = MultiGzDecoder::new(file);
-    let buf_reader = BufReader::new(decoder);
-    let mut reader = vcf::Reader::new(buf_reader);
-
-    println!("VCF header:");
-    let header = reader.read_header()?;
-    println!("{}", header);
-
-    println!("\nFirst {} data lines:", num_lines);
-    for (i, result) in reader.records(&header).take(num_lines).enumerate() {
-        match result {
-            Ok(record) => println!("Line {}: {:?}", i, record),
-            Err(e) => println!("Error reading line {}: {:?}", i, e),
+    for line in chunk.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
         }
+
+        let mut parts = line.split(|&b| b == b'\t');
+        let chr = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u8>().ok()).unwrap_or(0);
+        let pos = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u32>().ok()).unwrap_or(0);
+
+        if let Some(&weight) = effect_weights.get(&(chr, pos)) {
+            let genotypes = parts.skip(7);
+            for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
+                sample.total_variants += 1;
+                match genotype.first() {
+                    Some(b'0') => sample.matched_variants += 1,
+                    Some(b'1') => {
+                        sample.score += f64::from(weight);
+                        sample.matched_variants += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        last_chr = chr;
+        last_pos = pos;
     }
 
-    Ok(())
+    Some((last_chr, last_pos))
 }
+
 
 fn write_csv_output(
     output_path: &str,
     vcf_path: &str,
     sample_names: &[String],
     sample_data: &[SampleData],
-    duration: Duration
+    duration: std::time::Duration
 ) -> Result<(), VcfError> {
     let path = Path::new(output_path);
     let prefix = path.parent().unwrap_or_else(|| Path::new(""));
