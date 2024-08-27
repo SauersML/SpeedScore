@@ -95,12 +95,14 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
             io::Error::new(io::ErrorKind::InvalidData, "Missing 'effect_weight' column")
         })?;
 
+
         if let (chr, Ok(pos), Ok(weight)) = (
             parts[chr_index].to_string(),
             parts[pos_index].parse::<u32>(),
             parts[weight_index].parse::<f32>()
         ) {
-            effect_weights.insert((chr.clone(), pos), weight);
+            let normalized_chr = chr.trim_start_matches("chr").to_string();
+            effect_weights.insert((normalized_chr, pos), weight);
             count += 1;
             if count <= 5 {
                 println!("Loaded scoring data: chr={}, pos={}, weight={}", chr, pos, weight);
