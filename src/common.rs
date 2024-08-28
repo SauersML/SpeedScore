@@ -101,8 +101,9 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
             parts[pos_index].parse::<u32>(),
             parts[weight_index].parse::<f32>()
         ) {
-            let normalized_chr = chr.trim_start_matches("chr").to_string();
-            effect_weights.insert((normalized_chr, pos), weight);
+            let normalized_chr = parts[chr_index].trim_start_matches("chr").to_string();
+            effect_weights.insert((normalized_chr.clone(), pos), weight);
+            effect_weights.insert((format!("chr{}", normalized_chr), pos), weight);
             count += 1;
             if count <= 5 {
                 println!("Loaded scoring data: chr={}, pos={}, weight={}", chr, pos, weight);
