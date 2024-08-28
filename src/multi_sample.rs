@@ -194,10 +194,18 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sam
         }
 
         let mut parts = line.split(|&b| b == b'\t');
-        let chr = parts.next().and_then(|s| std::str::from_utf8(s).ok().map(|s| s.to_string())).unwrap_or_default();
-        let pos = parts.next().and_then(|s| std::str::from_utf8(s).ok()?.parse::<u32>().ok()).unwrap_or(0);
+        let chr = parts.next()
+            .and_then(|s| std::str::from_utf8(s).ok().map(|s| s.to_string()))
+            .unwrap_or_default();
+        let normalized_chr = chr.trim_start_matches("chr").to_string();
 
-        if let Some(&weight) = effect_weights.get(&(chr.clone(), pos)) {
+        let pos = parts.next()
+            .and_then(|s| std::str::from_utf8(s).ok()?.parse::<u64>().ok())
+            .and_then(|p| u32::try_from(p).ok())
+            .unwrap_or(0);
+
+        if let Some(&weight) = effect_weights.get(&(normalized_chr.clone(), pos)).or_else(|| effect_weights.get(&(format!("chr{}", normalized_chr), pos))) {
+
             let genotypes = parts.skip(7);
             for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
                 sample.total_variants += 1;
