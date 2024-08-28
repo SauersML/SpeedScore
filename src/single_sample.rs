@@ -39,12 +39,14 @@ fn process_line(line: &str, effect_weights: &HashMap<(String, u32), f32>, index:
     }
 
     let chr = parts[0];
-    if let Ok(pos) = parts[1].parse::<u32>() {
+    let normalized_chr = chr.trim_start_matches("chr").to_string();
+    
+    if let Ok(pos) = parts[1].parse::<u64>().and_then(|p| u32::try_from(p).ok()) {
         if index < 5 {
-            println!("Processing variant: chr={}, pos={}", chr, pos);
+            println!("Processing variant (example): chr={}, pos={}", chr, pos);
         }
 
-        if let Some(&weight) = effect_weights.get(&(chr.to_string(), pos)) {
+        if let Some(&weight) = effect_weights.get(&(normalized_chr.clone(), pos)).or_else(|| effect_weights.get(&(format!("chr{}", normalized_chr), pos))) {
             let genotype = parts[9];
             let allele_count = match genotype.chars().next() {
                 Some('0') => 0,
