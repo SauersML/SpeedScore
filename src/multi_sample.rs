@@ -76,22 +76,18 @@ struct SampleData {
     total_variants: usize,
 }
 
-
-
-
 fn open_vcf_reader(path: &str) -> Result<BufReader<MultiGzDecoder<File>>, VcfError> {
     let file = File::open(path).map_err(VcfError::Io)?;
     let decoder = MultiGzDecoder::new(file);
     Ok(BufReader::with_capacity(1024 * 1024, decoder)) // 1MB buffer
 }
 
-
 pub fn calculate_polygenic_score_multi(
     vcf_path: &str,
     effect_weights: &HashMap<(String, u32), f32>,
     output_path: &str,
     debug: bool
-) -> Result<(f64, usize, usize), VcfError> {
+) -> Result<(f64, usize, usize, bool), VcfError> {
     let start_time = Instant::now();
 
     println!("Opening file: {}", vcf_path);
@@ -121,13 +117,12 @@ pub fn calculate_polygenic_score_multi(
         .unwrap());
     pb.set_message("Processing...");
 
-    let chunk_size = 10000; // Process 10,000 lines at a time
     let mut buffer = Vec::new();
     let mut sample_data: Vec<SampleData> = vec![SampleData::default(); sample_names.len()];
     let mut lines_processed = 0;
     let mut last_chr = String::new();
     let mut last_pos = 0;
-
+    let mut vcf_chr_format = false;
 
     loop {
         buffer.clear();
@@ -140,7 +135,7 @@ pub fn calculate_polygenic_score_multi(
 
         if !buffer.starts_with(&[b'#']) {
             let result = process_chunk(&buffer, effect_weights, &mut sample_data, debug);
-            if let Some((chr, pos)) = result {
+            if let Some((chr, pos, chr_format)) = result {
                 if debug && (chr != last_chr || pos > last_pos + 20_000_000) {
                     pb.suspend(|| {
                         println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
@@ -149,6 +144,7 @@ pub fn calculate_polygenic_score_multi(
                     last_chr = chr;
                     last_pos = pos;
                 }
+                vcf_chr_format = chr_format;
             }
         }
 
@@ -180,13 +176,13 @@ pub fn calculate_polygenic_score_multi(
     println!("Results written to: {}", output_path);
     println!("Processing time: {:?}", duration);
 
-    Ok((avg_score, total_variants, matched_variants))
+    Ok((avg_score, total_variants, matched_variants, vcf_chr_format))
 }
 
-
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sample_data: &mut [SampleData], _debug: bool) -> Option<(String, u32)> {
+fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sample_data: &mut [SampleData], _debug: bool) -> Option<(String, u32, bool)> {
     let mut last_chr = String::new();
     let mut last_pos = 0;
+    let mut chr_format = false;
 
     for line in chunk.split(|&b| b == b'\n') {
         if line.is_empty() {
@@ -198,14 +194,14 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sam
             .and_then(|s| std::str::from_utf8(s).ok().map(|s| s.to_string()))
             .unwrap_or_default();
         let normalized_chr = chr.trim_start_matches("chr").to_string();
+        chr_format = chr.starts_with("chr");
 
         let pos = parts.next()
             .and_then(|s| std::str::from_utf8(s).ok()?.parse::<u64>().ok())
             .and_then(|p| u32::try_from(p).ok())
             .unwrap_or(0);
 
-        if let Some(&weight) = effect_weights.get(&(normalized_chr.clone(), pos)).or_else(|| effect_weights.get(&(format!("chr{}", normalized_chr), pos))) {
-
+        if let Some(&weight) = effect_weights.get(&(normalized_chr.clone(), pos)) {
             let genotypes = parts.skip(7);
             for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
                 sample.total_variants += 1;
@@ -224,9 +220,8 @@ fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sam
         last_pos = pos;
     }
 
-    Some((last_chr, last_pos))
+    Some((last_chr, last_pos, chr_format))
 }
-
 
 fn write_csv_output(
     output_path: &str,
