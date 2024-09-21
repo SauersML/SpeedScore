@@ -4,6 +4,8 @@ use std::io::{self, BufRead, BufReader};
 use std::time::Duration;
 use clap::Parser;
 use flate2::read::GzDecoder;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -24,6 +26,10 @@ pub struct Args {
 pub enum FileType {
     SingleSample,
     MultiSample,
+}
+
+pub struct ChromosomeFormat {
+    pub has_chr_prefix: bool,
 }
 
 impl FileType {
@@ -55,16 +61,14 @@ impl FileType {
     }
 }
 
-
-
-pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> {
+pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>, Rc<RefCell<ChromosomeFormat>>)> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut effect_weights = HashMap::new();
     let mut headers: Option<Vec<String>> = None;
-
-
+    let chr_format = Rc::new(RefCell::new(ChromosomeFormat { has_chr_prefix: false }));
     let mut count = 0;
+
     for line in reader.lines() {
         let line = line?;
         if line.starts_with('#') {
@@ -95,15 +99,16 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
             io::Error::new(io::ErrorKind::InvalidData, "Missing 'effect_weight' column")
         })?;
 
-
         if let (chr, Ok(pos), Ok(weight)) = (
             parts[chr_index].to_string(),
             parts[pos_index].parse::<u32>(),
             parts[weight_index].parse::<f32>()
         ) {
-            let normalized_chr = parts[chr_index].trim_start_matches("chr").to_string();
-            effect_weights.insert((normalized_chr.clone(), pos), weight);
-            effect_weights.insert((format!("chr{}", normalized_chr), pos), weight);
+            if count == 0 {
+                chr_format.borrow_mut().has_chr_prefix = chr.starts_with("chr");
+            }
+            let normalized_chr = chr.trim_start_matches("chr").to_string();
+            effect_weights.insert((normalized_chr, pos), weight);
             count += 1;
             if count <= 5 {
                 println!("Loaded scoring data example: chr={}, pos={}, weight={}", chr, pos, weight);
@@ -112,27 +117,28 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
     }
 
     println!("Total scoring entries loaded: {}", effect_weights.len());
-    Ok(effect_weights)
+    Ok((effect_weights, chr_format))
 }
 
-
-pub fn output_results(args: &Args, score: f64, total_variants: usize, matched_variants: usize, duration: Duration, scoring_variants: usize) -> io::Result<()> {
+pub fn output_results(args: &Args, score: f64, total_variants: usize, matched_variants: usize, duration: Duration, scoring_variants: usize, vcf_chr_format: bool, scoring_chr_format: bool) -> io::Result<()> {
     let output = format!(
-        "VCF_File\tScore_File\tPolygenic_Score\tCalculation_Time_Seconds\tTotal_Variants\tMatched_Variants\tScoring_Variants\n\
-         {}\t{}\t{}\t{:.6}\t{}\t{}\t{}\n",
+        "VCF_File\tScore_File\tPolygenic_Score\tCalculation_Time_Seconds\tTotal_Variants\tMatched_Variants\tScoring_Variants\tVCF_Chr_Format\tScoring_Chr_Format\n\
+         {}\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{}\t{}\n",
         args.vcf,
         args.scoring,
         score,
         duration.as_secs_f64(),
         total_variants,
         matched_variants,
-        scoring_variants
+        scoring_variants,
+        vcf_chr_format,
+        scoring_chr_format
     );
 
     std::fs::write(&args.output, output)
 }
 
-pub fn print_info(score: f64, total_variants: usize, matched_variants: usize, scoring_variants: usize, duration: Duration) {
+pub fn print_info(score: f64, total_variants: usize, matched_variants: usize, scoring_variants: usize, duration: Duration, vcf_chr_format: bool, scoring_chr_format: bool) {
     println!("\nDetailed Information:");
     println!("---------------------");
     println!("Total variants processed: {}", total_variants);
@@ -142,4 +148,6 @@ pub fn print_info(score: f64, total_variants: usize, matched_variants: usize, sc
     println!("Polygenic Score: {}", score);
     println!("Calculation time: {:.6} seconds", duration.as_secs_f64());
     println!("Variants processed per second: {:.0}", total_variants as f64 / duration.as_secs_f64());
+    println!("VCF chromosome format: {}", if vcf_chr_format { "chr" } else { "no chr" });
+    println!("Scoring file chromosome format: {}", if scoring_chr_format { "chr" } else { "no chr" });
 }
