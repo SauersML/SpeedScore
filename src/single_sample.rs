@@ -1,10 +1,13 @@
+use flate2::read::MultiGzDecoder;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use flate2::read::MultiGzDecoder;
-use rayon::prelude::*;
 
-pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u32), f32>) -> io::Result<(f64, usize, usize)> {
+pub fn calculate_polygenic_score(
+    path: &str,
+    effect_weights: &HashMap<(String, u32), f32>,
+) -> io::Result<(f64, usize, usize)> {
     let file = File::open(path)?;
     let reader = BufReader::with_capacity(1024 * 1024, MultiGzDecoder::new(file)); // 1MB buffer
 
@@ -25,7 +28,11 @@ pub fn calculate_polygenic_score(path: &str, effect_weights: &HashMap<(String, u
     Ok((score, total_variants, matched_variants))
 }
 
-fn process_line(line: &str, effect_weights: &HashMap<(String, u32), f32>, index: usize) -> (f64, usize, usize) {
+fn process_line(
+    line: &str,
+    effect_weights: &HashMap<(String, u32), f32>,
+    index: usize,
+) -> (f64, usize, usize) {
     if index < 5 {
         println!("Raw VCF line {}: {}", index + 1, line);
     }
@@ -40,24 +47,39 @@ fn process_line(line: &str, effect_weights: &HashMap<(String, u32), f32>, index:
 
     let chr = parts[0];
     let normalized_chr = chr.trim_start_matches("chr").to_string();
-    
-    if let Ok(pos) = parts[1].parse::<u64>().and_then(|p| Ok(u32::try_from(p).ok())) {
+
+    if let Ok(pos) = parts[1]
+        .parse::<u64>()
+        .and_then(|p| Ok(u32::try_from(p).ok()))
+    {
         if index < 5 {
-            println!("Processing variant (example): chr={}, pos={}", chr, pos);
+            println!("Processing variant (example): chr={}, pos={:?}", chr, pos);
         }
 
-        if let Some(&weight) = effect_weights.get(&(normalized_chr.clone(), pos)).or_else(|| effect_weights.get(&(format!("chr{}", normalized_chr), pos))) {
+        if let Some(&weight) = effect_weights
+            .get(&(normalized_chr.clone(), pos.unwrap()))
+            .or_else(|| effect_weights.get(&(format!("chr{}", normalized_chr), pos.unwrap())))
+        {
             let genotype = parts[9];
             let allele_count = match genotype.chars().next() {
                 Some('0') => 0,
-                Some('1') => if genotype.chars().nth(2) == Some('1') { 2 } else { 1 },
+                Some('1') => {
+                    if genotype.chars().nth(2) == Some('1') {
+                        2
+                    } else {
+                        1
+                    }
+                }
                 _ => return (0.0, 1, 0),
             };
 
             let score = f64::from(weight) * allele_count as f64;
 
             if index < 5 {
-                println!("Matched variant: chr={}, pos={}, weight={}, allele_count={}", chr, pos, weight, allele_count);
+                println!(
+                    "Matched variant: chr={}, pos={:?}, weight={}, allele_count={}",
+                    chr, pos, weight, allele_count
+                );
             }
 
             (score, 1, 1)
