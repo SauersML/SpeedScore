@@ -106,7 +106,7 @@ pub fn load_scoring_file(path: &str) -> io::Result<HashMap<(String, u32), f32>> 
             effect_weights.insert((format!("chr{}", normalized_chr), pos), weight);
             count += 1;
             if count <= 5 {
-                println!("Loaded scoring data: chr={}, pos={}, weight={}", chr, pos, weight);
+                println!("Loaded scoring data example: chr={}, pos={}, weight={}", chr, pos, weight);
             }
         }
     }
