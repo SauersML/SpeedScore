@@ -41,7 +41,7 @@ fn process_line(line: &str, effect_weights: &HashMap<(String, u32), f32>, index:
     let chr = parts[0];
     let normalized_chr = chr.trim_start_matches("chr").to_string();
     
-    if let Ok(pos) = parts[1].parse::<u64>().and_then(|p| u32::try_from(p).ok()) {
+    if let Ok(pos) = parts[1].parse::<u64>().and_then(|p| Ok(u32::try_from(p).ok())) {
         if index < 5 {
             println!("Processing variant (example): chr={}, pos={}", chr, pos);
         }
