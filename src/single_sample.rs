@@ -3,15 +3,22 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
+use std::cell::RefCell;
+use std::rc::Rc;
+use crate::common::ChromosomeFormat;
 
 pub fn calculate_polygenic_score(
     path: &str,
     effect_weights: &HashMap<(String, u32), f32>,
-) -> io::Result<(f64, usize, usize)> {
+    chr_format: Rc<RefCell<ChromosomeFormat>>,
+) -> io::Result<(f64, usize, usize, bool)> {
     let file = File::open(path)?;
     let reader = BufReader::with_capacity(1024 * 1024, MultiGzDecoder::new(file)); // 1MB buffer
 
     let lines: Vec<String> = reader.lines().collect::<io::Result<_>>()?;
+
+    let vcf_chr_format = detect_vcf_chr_format(&lines);
+    chr_format.borrow_mut().has_chr_prefix = vcf_chr_format;
 
     let (score, total_variants, matched_variants) = lines
         .par_iter()
@@ -25,7 +32,14 @@ pub fn calculate_polygenic_score(
             },
         );
 
-    Ok((score, total_variants, matched_variants))
+    Ok((score, total_variants, matched_variants, vcf_chr_format))
+}
+
+fn detect_vcf_chr_format(lines: &[String]) -> bool {
+    lines.iter()
+        .find(|line| !line.starts_with('#'))
+        .map(|line| line.split_once('\t').unwrap().0.starts_with("chr"))
+        .unwrap_or(false)
 }
 
 fn process_line(
@@ -48,18 +62,12 @@ fn process_line(
     let chr = parts[0];
     let normalized_chr = chr.trim_start_matches("chr").to_string();
 
-    if let Ok(pos) = parts[1]
-        .parse::<u64>()
-        .and_then(|p| Ok(u32::try_from(p).ok()))
-    {
+    if let Ok(pos) = parts[1].parse::<u32>() {
         if index < 5 {
             println!("Processing variant (example): chr={}, pos={:?}", chr, pos);
         }
 
-        if let Some(&weight) = effect_weights
-            .get(&(normalized_chr.clone(), pos.unwrap()))
-            .or_else(|| effect_weights.get(&(format!("chr{}", normalized_chr), pos.unwrap())))
-        {
+        if let Some(&weight) = effect_weights.get(&(normalized_chr, pos)) {
             let genotype = parts[9];
             let allele_count = match genotype.chars().next() {
                 Some('0') => 0,
