@@ -61,14 +61,15 @@ impl FileType {
     }
 }
 
-pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>, Rc<RefCell<ChromosomeFormat>>)> {
+
+pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>, bool)> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut effect_weights = HashMap::new();
     let mut headers: Option<Vec<String>> = None;
-    let chr_format = Rc::new(RefCell::new(ChromosomeFormat { has_chr_prefix: false }));
-    let mut count = 0;
+    let mut scoring_chr_format = false;
 
+    let mut count = 0;
     for line in reader.lines() {
         let line = line?;
         if line.starts_with('#') {
@@ -105,7 +106,7 @@ pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>,
             parts[weight_index].parse::<f32>()
         ) {
             if count == 0 {
-                chr_format.borrow_mut().has_chr_prefix = chr.starts_with("chr");
+                scoring_chr_format = chr.starts_with("chr");
             }
             let normalized_chr = chr.trim_start_matches("chr").to_string();
             effect_weights.insert((normalized_chr, pos), weight);
@@ -117,8 +118,9 @@ pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>,
     }
 
     println!("Total scoring entries loaded: {}", effect_weights.len());
-    Ok((effect_weights, chr_format))
+    Ok((effect_weights, scoring_chr_format))
 }
+
 
 pub fn output_results(args: &Args, score: f64, total_variants: usize, matched_variants: usize, duration: Duration, scoring_variants: usize, vcf_chr_format: bool, scoring_chr_format: bool) -> io::Result<()> {
     let output = format!(
