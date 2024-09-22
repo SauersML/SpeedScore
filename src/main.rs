@@ -10,14 +10,13 @@ use common::{Args, FileType, load_scoring_file, output_results, print_info, Chro
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let start = Instant::now();
-    let (effect_weights, chr_format) = load_scoring_file(&args.scoring)?;
+    let (effect_weights, scoring_chr_format) = load_scoring_file(&args.scoring)?;
     
     let file_type = FileType::detect(&args.vcf)?;
     
     let (score, total_variants, matched_variants, vcf_chr_format) = match file_type {
         FileType::SingleSample => {
-            let (score, total, matched, vcf_format) = single_sample::calculate_polygenic_score(&args.vcf, &effect_weights, chr_format.clone())?;
-            (score, total, matched, vcf_format)
+            single_sample::calculate_polygenic_score(&args.vcf, &effect_weights)?
         },
         FileType::MultiSample => {
             let output_path = if args.output.is_empty() {
@@ -25,20 +24,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 args.output.clone()
             };
-            let (avg_score, total, matched, vcf_format) = multi_sample::calculate_polygenic_score_multi(
+            multi_sample::calculate_polygenic_score_multi(
                 &args.vcf,
                 &effect_weights,
                 &output_path,
-                args.info,
-                chr_format.clone()
-            )?;
-            println!("Multi-sample results written to: {}", output_path);
-            (avg_score, total, matched, vcf_format)
+                args.info
+            )?
         },
     };
 
     let duration = start.elapsed();
-    let scoring_chr_format = chr_format.borrow().has_chr_prefix;
 
     match file_type {
         FileType::SingleSample => {
