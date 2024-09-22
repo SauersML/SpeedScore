@@ -10,7 +10,6 @@ use crate::common::ChromosomeFormat;
 pub fn calculate_polygenic_score(
     path: &str,
     effect_weights: &HashMap<(String, u32), f32>,
-    chr_format: Rc<RefCell<ChromosomeFormat>>,
 ) -> io::Result<(f64, usize, usize, bool)> {
     let file = File::open(path)?;
     let reader = BufReader::with_capacity(1024 * 1024, MultiGzDecoder::new(file)); // 1MB buffer
@@ -18,7 +17,6 @@ pub fn calculate_polygenic_score(
     let lines: Vec<String> = reader.lines().collect::<io::Result<_>>()?;
 
     let vcf_chr_format = detect_vcf_chr_format(&lines);
-    chr_format.borrow_mut().has_chr_prefix = vcf_chr_format;
 
     let (score, total_variants, matched_variants) = lines
         .par_iter()
