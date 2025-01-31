@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::cell::RefCell;
-use std::rc::Rc;
 
 /// Single sample polygenic score calculation.
 ///
