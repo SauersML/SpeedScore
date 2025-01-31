@@ -62,10 +62,12 @@ impl FileType {
 }
 
 
-pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>, bool)> {
+pub fn load_scoring_file(
+    path: &str
+) -> io::Result<(HashMap<(String, u32), (String, f32)>, bool)> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let mut effect_weights = HashMap::new();
+    let mut effect_weights: HashMap<(String, u32), (String, f32)> = HashMap::new();
     let mut headers: Option<Vec<String>> = None;
     let mut scoring_chr_format = false;
 
@@ -75,7 +77,8 @@ pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>,
         if line.starts_with('#') {
             continue;
         }
-        
+
+        // First non‐comment line is assumed to be headers
         if headers.is_none() {
             headers = Some(line.split('\t').map(String::from).collect());
             continue;
@@ -83,11 +86,14 @@ pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>,
 
         let headers = headers.as_ref().unwrap();
         let parts: Vec<&str> = line.split('\t').collect();
-
         if parts.len() != headers.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Mismatch between header and data columns"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Mismatch between header and data columns"
+            ));
         }
 
+        // Find column indices for chr, position, effect_allele, effect_weight
         let chr_index = headers.iter().position(|h| h == "chr_name").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "Missing 'chr_name' column")
         })?;
@@ -96,24 +102,40 @@ pub fn load_scoring_file(path: &str) -> io::Result<(HashMap<(String, u32), f32>,
             io::Error::new(io::ErrorKind::InvalidData, "Missing 'chr_position' column")
         })?;
 
+        let allele_index = headers.iter().position(|h| h == "effect_allele").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing 'effect_allele' column")
+        })?;
+
         let weight_index = headers.iter().position(|h| h == "effect_weight").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "Missing 'effect_weight' column")
         })?;
 
-        if let (chr, Ok(pos), Ok(weight)) = (
-            parts[chr_index].to_string(),
-            parts[pos_index].parse::<u32>(),
-            parts[weight_index].parse::<f32>()
-        ) {
-            if count == 0 {
-                scoring_chr_format = chr.starts_with("chr");
-            }
-            let normalized_chr = chr.trim_start_matches("chr").to_string();
-            effect_weights.insert((normalized_chr, pos), weight);
-            count += 1;
-            if count <= 5 {
-                println!("Loaded scoring data example: chr={}, pos={}, weight={}", chr, pos, weight);
-            }
+        let chr = parts[chr_index].to_string();
+        let pos = parts[pos_index].parse::<u32>().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Invalid numeric position")
+        })?;
+        let allele = parts[allele_index].to_string();  // e.g., "A", "T", etc.
+        let weight = parts[weight_index].parse::<f32>().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Invalid numeric weight")
+        })?;
+
+        // Check if our first line uses 'chr' prefix
+        if count == 0 {
+            scoring_chr_format = chr.starts_with("chr");
+        }
+
+        // Normalize chromosome (remove leading "chr")
+        let normalized_chr = chr.trim_start_matches("chr").to_string();
+
+        // Store (effect_allele, effect_weight)
+        effect_weights.insert((normalized_chr, pos), (allele, weight));
+        count += 1;
+
+        if count <= 5 {
+            println!(
+                "Loaded scoring data example: chr={}, pos={}, allele={}, weight={}",
+                chr, pos, allele, weight
+            );
         }
     }
 
