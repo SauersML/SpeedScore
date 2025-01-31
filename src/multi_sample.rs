@@ -225,7 +225,15 @@ fn process_chunk(
         // Increase total_variants and matched_variants for each sample
         for (sample, genotype_field) in sample_data.iter_mut().zip(genotype_fields) {
             sample.total_variants += 1;
-            sample.matched_variants += 1;
+            for (sample, genotype_field) in sample_data.iter_mut().zip(genotype_fields) {
+                sample.total_variants += 1;
+            
+                let gt = genotype_field.split(':').next().unwrap_or(".");
+                if let Some(allele_count) = parse_allele_count(gt, effect_is_alt) {
+                    sample.matched_variants += 1; // only increment if genotype is valid
+                    sample.score += (*weight as f64) * (allele_count as f64);
+                }
+            }
 
             // The genotype might look like "0/1:..." so we isolate the GT
             let gt = genotype_field.split(':').next().unwrap_or(".");
