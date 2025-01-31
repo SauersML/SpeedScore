@@ -36,38 +36,6 @@ impl From<std::string::FromUtf8Error> for VcfError {
     }
 }
 
-struct VcfReader<R: Read> {
-    reader: BufReader<R>,
-    sample_names: Vec<String>,
-}
-
-impl<R: Read> VcfReader<R> {
-    fn new(reader: R) -> Result<Self, VcfError> {
-        let mut vcf_reader = VcfReader {
-            reader: BufReader::new(reader),
-            sample_names: Vec::new(),
-        };
-        vcf_reader.find_header()?;
-        Ok(vcf_reader)
-    }
-
-    fn find_header(&mut self) -> Result<(), VcfError> {
-        for line in self.reader.by_ref().lines() {
-            let line = line?;
-            if line.starts_with("#CHROM") {
-                self.sample_names = line.split_whitespace().skip(9).map(String::from).collect();
-                return Ok(());
-            }
-        }
-        Err(VcfError::InvalidFormat("VCF header not found".to_string()))
-    }
-
-    fn read_line(&mut self, buf: &mut String) -> Result<usize, VcfError> {
-        buf.clear();
-        Ok(self.reader.read_line(buf)?)
-    }
-}
-
 #[derive(Clone, Default)]
 struct SampleData {
     score: f64,
