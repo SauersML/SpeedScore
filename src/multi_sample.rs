@@ -98,28 +98,40 @@ pub fn calculate_polygenic_score_multi(
         if num_lines == 0 {
             break;
         }
-
+    
         lines_processed += 1;
-
+    
         if !buffer.starts_with(&[b'#']) {
             let result = process_chunk(&buffer, effect_weights, &mut sample_data, debug);
             if let Some((chr, pos, chr_format)) = result {
                 if debug && (chr != last_chr || pos > last_pos + 20_000_000) {
                     pb.suspend(|| {
-                        println!("\rProcessed up to Chr {}, Pos {:.2}M", chr, pos as f64 / 1_000_000.0);
+                        println!(
+                            "\rProcessed up to Chr {}, Pos {:.2}M",
+                            chr,
+                            pos as f64 / 1_000_000.0
+                        );
                         io::stdout().flush().unwrap();
                     });
                     last_chr = chr;
                     last_pos = pos;
                 }
-                vcf_chr_format = chr_format;
+                if lines_processed == 1 {
+                    vcf_chr_format = chr_format;
+                }
             }
         }
-
+    
         if lines_processed % 100_000 == 0 {
             let lines_in_k = lines_processed / 1000;
-            let variants = sample_data.iter().map(|sd| sd.total_variants).sum::<usize>();
-            let matched = sample_data.iter().map(|sd| sd.matched_variants).sum::<usize>();
+            let variants = sample_data
+                .iter()
+                .map(|sd| sd.total_variants)
+                .sum::<usize>();
+            let matched = sample_data
+                .iter()
+                .map(|sd| sd.matched_variants)
+                .sum::<usize>();
             pb.set_message(format!(
                 "{}K lines, {}K variants, {}K matched",
                 lines_in_k,
@@ -128,7 +140,6 @@ pub fn calculate_polygenic_score_multi(
             ));
         }
     }
-
     pb.finish_with_message("Processing complete");
 
     let duration = start_time.elapsed();
