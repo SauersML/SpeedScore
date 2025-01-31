@@ -3,7 +3,7 @@ use clap::Parser;
 mod common;
 mod single_sample;
 mod multi_sample;
-use common::{Args, FileType, load_scoring_file, output_results, print_info, ChromosomeFormat};
+use common::{Args, FileType, load_scoring_file, output_results, print_info};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
