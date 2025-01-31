@@ -7,30 +7,36 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use crate::common::ChromosomeFormat;
 
+/// Single sample polygenic score calculation.
+///
+/// `effect_weights` is a map from (chr, pos) -> (effect_allele, effect_weight).
 pub fn calculate_polygenic_score(
     path: &str,
-    effect_weights: &HashMap<(String, u32), f32>,
+    effect_weights: &HashMap<(String, u32), (String, f32)>,
 ) -> io::Result<(f64, usize, usize, bool)> {
     let file = File::open(path)?;
     let reader = BufReader::with_capacity(1024 * 1024, MultiGzDecoder::new(file)); // 1MB buffer
 
+    // Read entire file lines
     let lines: Vec<String> = reader.lines().collect::<io::Result<_>>()?;
 
-    let vcf_chr_format = detect_vcf_chr_format(&lines);
+    // Detect whether the VCF uses "chr" prefix by scanning first non‐header line
+    let vcf_chr_format = lines.iter()
+        .find(|line| !line.starts_with('#'))
+        .map(|line| line.starts_with("chr"))
+        .unwrap_or(false);
 
-    let (score, total_variants, matched_variants) = lines
+    // We will parallelize over lines, collecting (score, total, matched)
+    let (score_sum, total_variants, matched_variants) = lines
         .par_iter()
-        .enumerate()
-        .filter(|(_, line)| !line.starts_with('#'))
-        .map(|(index, line)| process_line(line, effect_weights, index))
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| process_single_sample_line(line, effect_weights))
         .reduce(
             || (0.0, 0, 0),
-            |(score_a, total_a, matched_a), (score_b, total_b, matched_b)| {
-                (score_a + score_b, total_a + total_b, matched_a + matched_b)
-            },
+            |acc, val| (acc.0 + val.0, acc.1 + val.1, acc.2 + val.2),
         );
 
-    Ok((score, total_variants, matched_variants, vcf_chr_format))
+    Ok((score_sum, total_variants, matched_variants, vcf_chr_format))
 }
 
 fn detect_vcf_chr_format(lines: &[String]) -> bool {
