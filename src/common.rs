@@ -26,10 +26,6 @@ pub enum FileType {
     MultiSample,
 }
 
-pub struct ChromosomeFormat {
-    pub has_chr_prefix: bool,
-}
-
 impl FileType {
     pub fn detect(path: &str) -> io::Result<Self> {
         let file = File::open(path)?;
