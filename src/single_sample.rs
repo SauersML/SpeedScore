@@ -3,7 +3,6 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::cell::RefCell;
 
 /// Single sample polygenic score calculation.
 ///
