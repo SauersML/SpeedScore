@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::time::Instant;
 use std::path::Path;
 use flate2::read::MultiGzDecoder;
