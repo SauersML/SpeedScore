@@ -179,48 +179,118 @@ pub fn calculate_polygenic_score_multi(
     Ok((avg_score, total_variants, matched_variants, vcf_chr_format))
 }
 
-fn process_chunk(chunk: &[u8], effect_weights: &HashMap<(String, u32), f32>, sample_data: &mut [SampleData], _debug: bool) -> Option<(String, u32, bool)> {
+/// Processes one chunk of lines (already read from the file).
+/// For each line, parse CHR, POS, REF, ALT, then genotypes for each sample.
+/// We skip multi‐allelic sites or missing genotypes. 
+/// Returns `(last_chr, last_pos, vcf_uses_chr_prefix)`.
+pub fn process_chunk(
+    chunk: &[u8],
+    effect_weights: &HashMap<(String, u32), (String, f32)>,
+    sample_data: &mut [SampleData],
+    _debug: bool
+) -> Option<(String, u32, bool)> {
     let mut last_chr = String::new();
     let mut last_pos = 0;
-    let mut chr_format = false;
+    let mut vcf_chr_format = false;
 
+    // Split chunk by newlines
     for line in chunk.split(|&b| b == b'\n') {
-        if line.is_empty() {
+        if line.is_empty() || line.starts_with(&[b'#']) {
             continue;
         }
 
-        let mut parts = line.split(|&b| b == b'\t');
-        let chr = parts.next()
-            .and_then(|s| std::str::from_utf8(s).ok().map(|s| s.to_string()))
-            .unwrap_or_default();
-        let normalized_chr = chr.trim_start_matches("chr").to_string();
-        chr_format = chr.starts_with("chr");
+        // Convert line to string
+        let line_str = match std::str::from_utf8(line) {
+            Ok(s) => s,
+            Err(_) => continue, // skip invalid UTF-8
+        };
 
-        let pos = parts.next()
-            .and_then(|s| std::str::from_utf8(s).ok()?.parse::<u64>().ok())
-            .and_then(|p| u32::try_from(p).ok())
-            .unwrap_or(0);
+        let parts: Vec<&str> = line_str.split('\t').collect();
+        if parts.len() < 10 {
+            continue; // skip malformed line
+        }
 
-        if let Some(&weight) = effect_weights.get(&(normalized_chr.clone(), pos)) {
-            let genotypes = parts.skip(7);
-            for (sample, genotype) in sample_data.iter_mut().zip(genotypes) {
+        let chr_raw = parts[0];
+        let pos_raw = parts[1];
+        let ref_allele = parts[3];
+        let alt_allele = parts[4];
+
+        // The 8th column is `FORMAT`; sample genotypes start at index 9
+        let genotype_fields = &parts[9..];
+
+        let pos = match pos_raw.parse::<u32>() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        last_chr = chr_raw.to_string();
+        last_pos = pos;
+        vcf_chr_format = chr_raw.starts_with("chr");
+
+        // Normalize chromosome to match how we stored it in effect_weights
+        let normalized_chr = chr_raw.trim_start_matches("chr").to_string();
+
+        // If not found in effect_weights, skip
+        let (effect_allele, weight) = match effect_weights.get(&(normalized_chr.clone(), pos)) {
+            Some(x) => x,
+            None => {
+                // Still count total_variants for each sample?
+                for sample in sample_data.iter_mut() {
+                    sample.total_variants += 1;
+                }
+                continue;
+            }
+        };
+
+        // Check if effect allele is REF or ALT. Otherwise skip
+        let effect_is_ref = effect_allele == ref_allele;
+        let effect_is_alt = effect_allele == alt_allele;
+        if !effect_is_ref && !effect_is_alt {
+            // Increase total_variants but not matched
+            for sample in sample_data.iter_mut() {
                 sample.total_variants += 1;
-                match genotype.first() {
-                    Some(b'0') => sample.matched_variants += 1,
-                    Some(b'1') => {
-                        sample.score += f64::from(weight);
-                        sample.matched_variants += 1;
-                    }
-                    _ => {}
+            }
+            continue;
+        }
+
+        // At this point, we have a matched variant that matters for scoring
+        // Increase total_variants and matched_variants for each sample
+        for (sample, genotype_field) in sample_data.iter_mut().zip(genotype_fields) {
+            sample.total_variants += 1;
+            sample.matched_variants += 1;
+
+            // The genotype might look like "0/1:..." so we isolate the GT
+            let gt = genotype_field.split(':').next().unwrap_or(".");
+
+            // Count how many effect alleles
+            match parse_allele_count(gt, effect_is_alt) {
+                Some(allele_count) => {
+                    sample.score += (*weight as f64) * (allele_count as f64);
+                }
+                None => {
+                    // skip if missing or multi-allelic
                 }
             }
         }
-
-        last_chr = chr;
-        last_pos = pos;
     }
 
-    Some((last_chr, last_pos, chr_format))
+    Some((last_chr, last_pos, vcf_chr_format))
+}
+
+/// Identical to the single-sample helper (move to common later):
+/// If `effect_is_alt`, we count '1' as effect alleles; otherwise we count '0'.
+fn parse_allele_count(gt: &str, effect_is_alt: bool) -> Option<u8> {
+    let mut count = 0u8;
+    for c in gt.chars() {
+        match c {
+            '0' if !effect_is_alt => count += 1,
+            '1' if effect_is_alt => count += 1,
+            '.' | '2' | '3' => return None, // skip multi-allelic or missing
+            '|' | '/' => {}
+            _ => {}
+        }
+    }
+    Some(count)
 }
 
 fn write_csv_output(
