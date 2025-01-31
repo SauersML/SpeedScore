@@ -9,7 +9,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 #[derive(Debug)]
 pub enum VcfError {
     Io(io::Error),
-    InvalidFormat(String),
     Utf8Error(std::string::FromUtf8Error),
 }
 
@@ -17,7 +16,6 @@ impl std::fmt::Display for VcfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VcfError::Io(err) => write!(f, "I/O error: {}", err),
-            VcfError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
             VcfError::Utf8Error(err) => write!(f, "UTF-8 error: {}", err),
         }
     }
