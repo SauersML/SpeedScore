@@ -116,10 +116,3 @@ fn parse_allele_count(genotype: &str, effect_is_alt: bool) -> Option<u8> {
     }
     Some(count)
 }
-
-fn detect_vcf_chr_format(lines: &[String]) -> bool {
-    lines.iter()
-        .find(|line| !line.starts_with('#'))
-        .map(|line| line.split_once('\t').unwrap().0.starts_with("chr"))
-        .unwrap_or(false)
-}
