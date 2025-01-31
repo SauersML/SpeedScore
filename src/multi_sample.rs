@@ -183,7 +183,7 @@ pub fn calculate_polygenic_score_multi(
 /// For each line, parse CHR, POS, REF, ALT, then genotypes for each sample.
 /// We skip multi‐allelic sites or missing genotypes. 
 /// Returns `(last_chr, last_pos, vcf_uses_chr_prefix)`.
-pub fn process_chunk(
+fn process_chunk(
     chunk: &[u8],
     effect_weights: &HashMap<(String, u32), (String, f32)>,
     sample_data: &mut [SampleData],
