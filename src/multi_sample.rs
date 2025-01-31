@@ -9,7 +9,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 #[derive(Debug)]
 pub enum VcfError {
     Io(io::Error),
-    InvalidFormat(String),
     Utf8Error(std::string::FromUtf8Error),
 }
 
