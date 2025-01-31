@@ -6,9 +6,9 @@ use std::path::Path;
 use flate2::read::MultiGzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 
+#[derive(Debug)]
 pub enum VcfError {
     Io(io::Error),
-    #[allow(dead_code)]
     InvalidFormat(String),
     Utf8Error(std::string::FromUtf8Error),
 }
