@@ -128,7 +128,7 @@ pub fn load_scoring_file(
         let normalized_chr = chr.trim_start_matches("chr").to_string();
 
         // Store (effect_allele, effect_weight)
-        effect_weights.insert((normalized_chr, pos), (allele, weight));
+        effect_weights.insert((normalized_chr, pos), (allele.clone(), weight));
         count += 1;
 
         if count <= 5 {
