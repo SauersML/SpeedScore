@@ -20,7 +20,7 @@ This Rust-based tool calculates polygenic scores from VCF (Variant Call Format) 
 
 1. Clone the repository:
    ```
-   git clone https://github.com/ScottSauers/SpeedScore.git
+   git clone https://github.com/SauersML/SpeedScore.git
    cd SpeedScore
    ```
 
